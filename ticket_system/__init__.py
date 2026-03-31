@@ -106,7 +106,7 @@ class TicketSystem(commands.Cog):
             "log_channel": None,
             "mode": "forum",  # "forum" oder "classic"
             "ticket_counter": 0,
-            "open_tickets": {},  # ticket_id -> {user_id, channel_id/thread_id, dm_id, panel_id}
+            "open_tickets": {},  # ticket_id -> {user_id, guild_id, channel_id/thread_id, dm_id, panel_id}
             "panels": [  # Standard Panels
                 {"id": "general", "name": "Allgemeiner Support", "description": "Für allgemeine Fragen und Hilfe", "emoji": "📧"},
                 {"id": "bug", "name": "Bug Report", "description": "Fehler melden", "emoji": "🐛"},
@@ -116,8 +116,9 @@ class TicketSystem(commands.Cog):
         }
         self.config.register_guild(**default_guild)
         
+        # Member-Daten speichern jetzt nur noch die guild_id und ticket_id Kombination
         default_member = {
-            "active_ticket": None  # ticket_id
+            "tickets": []  # Liste von {"guild_id": ..., "ticket_id": ...}
         }
         self.config.register_member(**default_member)
         
@@ -286,16 +287,17 @@ Geschlossen: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}
             
         guild = ctx.guild
         
-        # Prüfen ob User bereits ein offenes Ticket hat
-        member_data = await self.config.member(ctx.author).active_ticket()
-        if member_data:
-            ticket_data = await self.get_ticket_data(guild, member_data)
-            if ticket_data:
-                channel_id = ticket_data.get("channel_id") or ticket_data.get("thread_id")
-                channel = guild.get_channel(channel_id)
-                if channel:
-                    await ctx.send(f"ℹ️ Du hast bereits ein offenes Ticket: {channel.mention}")
-                    return
+        # Prüfen ob User bereits ein offenes Ticket hat (neues System mit tickets-Liste)
+        member_tickets = await self.config.member(ctx.author).tickets()
+        for ticket_entry in member_tickets:
+            if ticket_entry.get("guild_id") == guild.id:
+                ticket_data = await self.get_ticket_data(guild, ticket_entry["ticket_id"])
+                if ticket_data:
+                    channel_id = ticket_data.get("channel_id") or ticket_data.get("thread_id")
+                    channel = guild.get_channel(channel_id)
+                    if channel:
+                        await ctx.send(f"ℹ️ Du hast bereits ein offenes Ticket: {channel.mention}")
+                        return
         
         mode = await self.config.guild(guild).mode()
         
@@ -358,16 +360,21 @@ Geschlossen: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}
             await ctx.send("⚠️ Ich konnte dir keine DM senden. Bitte aktiviere DMs von Server-Mitgliedern.")
             dm_channel = None
         
-        # Ticket-Daten speichern
+        # Ticket-Daten speichern (mit guild_id für DM-Lookup)
         ticket_data = {
             "user_id": ctx.author.id,
+            "guild_id": guild.id,
             "thread_id": thread.id,
             "dm_id": dm_channel.id if dm_channel else None,
             "created_at": int(datetime.now().timestamp()),
             "mode": "forum"
         }
         await self.save_ticket_data(guild, ticket_id, ticket_data)
-        await self.config.member(ctx.author).active_ticket.set(ticket_id)
+        
+        # Member-Ticket-Zuordnung speichern (neues System)
+        member_tickets = await self.config.member(ctx.author).tickets()
+        member_tickets.append({"guild_id": guild.id, "ticket_id": ticket_id})
+        await self.config.member(ctx.author).tickets.set(member_tickets)
         
         # Bestätigung
         embed = discord.Embed(
@@ -439,16 +446,21 @@ Geschlossen: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}
             await ctx.send(f"❌ Fehler beim Erstellen des Tickets: {str(e)}")
             return
         
-        # Ticket-Daten speichern
+        # Ticket-Daten speichern (mit guild_id)
         ticket_data = {
             "user_id": ctx.author.id,
+            "guild_id": guild.id,
             "channel_id": channel.id,
             "dm_id": None,  # Kein DM im Classic-Mode
             "created_at": int(datetime.now().timestamp()),
             "mode": "classic"
         }
         await self.save_ticket_data(guild, ticket_id, ticket_data)
-        await self.config.member(ctx.author).active_ticket.set(ticket_id)
+        
+        # Member-Ticket-Zuordnung speichern (neues System)
+        member_tickets = await self.config.member(ctx.author).tickets()
+        member_tickets.append({"guild_id": guild.id, "ticket_id": ticket_id})
+        await self.config.member(ctx.author).tickets.set(member_tickets)
         
         # Begrüßung im Kanal
         embed = discord.Embed(
@@ -493,13 +505,21 @@ Geschlossen: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}
         """Schließt das aktuelle Ticket und erstellt ein Transcript"""
         guild = ctx.guild
         
-        # Ticket-ID finden
-        member_data = await self.config.member(ctx.author).active_ticket()
-        if not member_data:
+        # Ticket-ID finden (neues System mit tickets-Liste)
+        member_tickets = await self.config.member(ctx.author).tickets()
+        ticket_id = None
+        ticket_data = None
+        
+        # Erst prüfen ob User ein Ticket in diesem Guild hat
+        for ticket_entry in member_tickets:
+            if ticket_entry.get("guild_id") == guild.id:
+                ticket_id = ticket_entry["ticket_id"]
+                ticket_data = await self.get_ticket_data(guild, ticket_id)
+                if ticket_data:
+                    break
+        
+        if not ticket_data:
             # Prüfen ob es ein Staff-Mitglied ist und im Ticket-Kanal
-            ticket_data = None
-            ticket_id = None
-            
             async with self.config.guild(guild).open_tickets() as tickets:
                 for tid, data in tickets.items():
                     channel_id = data.get("channel_id") or data.get("thread_id")
@@ -511,13 +531,6 @@ Geschlossen: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}
             if not ticket_data:
                 await ctx.send("❌ Du hast kein aktives Ticket.")
                 return
-        else:
-            ticket_id = member_data
-            ticket_data = await self.get_ticket_data(guild, ticket_id)
-            if not ticket_data:
-                await ctx.send("❌ Ticket-Daten nicht gefunden.")
-                await self.config.member(ctx.author).active_ticket.set(None)
-                return
         
         # Kanal/Thread finden
         channel_id = ticket_data.get("channel_id") or ticket_data.get("thread_id")
@@ -526,10 +539,11 @@ Geschlossen: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}
         if not channel:
             await ctx.send("❌ Der Ticket-Kanal wurde nicht gefunden.")
             await self.delete_ticket_data(guild, ticket_id)
+            # Aufräumen der Member-Daten
             if ticket_data.get("user_id"):
                 user = guild.get_member(ticket_data["user_id"])
                 if user:
-                    await self.config.member(user).active_ticket.set(None)
+                    await self._remove_member_ticket(user, guild.id, ticket_id)
             return
         
         # Transcript erstellen
@@ -567,9 +581,18 @@ Geschlossen: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}
         # Daten bereinigen
         await self.delete_ticket_data(guild, ticket_id)
         if user:
-            await self.config.member(user).active_ticket.set(None)
+            await self._remove_member_ticket(user, guild.id, ticket_id)
         
         await ctx.send(f"✅ **Ticket #{ticket_id} wurde geschlossen.**\nDas Transcript wurde im Log-Channel gespeichert.")
+    
+    async def _remove_member_ticket(self, member: discord.Member, guild_id: int, ticket_id: int):
+        """Entfernt ein Ticket aus der Member-Datenliste"""
+        try:
+            member_tickets = await self.config.member(member).tickets()
+            member_tickets = [t for t in member_tickets if not (t.get("guild_id") == guild_id and t.get("ticket_id") == ticket_id)]
+            await self.config.member(member).tickets.set(member_tickets)
+        except Exception:
+            pass  # Fehler ignorieren, da es nur um Cleanup geht
     
     @commands.command(name="add")
     @commands.has_permissions(manage_channels=True)
@@ -676,17 +699,22 @@ Geschlossen: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}
         """Verarbeitet DM-Nachrichten vom User und leitet sie an den Thread weiter"""
         user = message.author
         
-        # Aktives Ticket des Users finden
-        member_data = await self.config.member(user).active_ticket()
-        if not member_data:
+        # Aktives Ticket des Users finden (neues System)
+        member_tickets = await self.config.member(user).tickets()
+        if not member_tickets:
             return
         
-        # Guild finden (muss über alle Guilds suchen oder aus ticket_data holen)
-        # Wir speichern die guild_id besser in den ticket_data
-        # Für jetzt: Wir durchsuchen alle Guilds des Bots
-        
-        for guild in self.bot.guilds:
-            ticket_data = await self.get_ticket_data(guild, member_data)
+        # Durchsuche alle Guilds nach dem passenden Ticket mit dieser DM-ID
+        for ticket_entry in member_tickets:
+            guild_id = ticket_entry.get("guild_id")
+            ticket_id = ticket_entry.get("ticket_id")
+            
+            # Finde das Guild
+            guild = self.bot.get_guild(guild_id)
+            if not guild:
+                continue
+            
+            ticket_data = await self.get_ticket_data(guild, ticket_id)
             if ticket_data and ticket_data.get("dm_id") == message.channel.id:
                 thread_id = ticket_data.get("thread_id")
                 if thread_id:
@@ -711,7 +739,7 @@ Geschlossen: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}
                             timestamp=message.created_at
                         )
                         embed.set_author(name=user.name, icon_url=user.display_avatar.url)
-                        embed.set_footer(text=f"📩 Vom User (Ticket #{member_data})")
+                        embed.set_footer(text=f"📩 Vom User (Ticket #{ticket_id})")
                         
                         try:
                             await thread.send(content=f"📨 **Nachricht von {user.name}**:", embed=embed, files=files)
@@ -839,15 +867,18 @@ Geschlossen: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}
         """Zeigt Informationen zum aktuellen Ticket"""
         guild = ctx.guild
         
-        # Ticket finden
+        # Ticket finden (neues System)
         ticket_data = None
         ticket_id = None
         
         # Erst prüfen ob User ein aktives Ticket hat
-        member_data = await self.config.member(ctx.author).active_ticket()
-        if member_data:
-            ticket_id = member_data
-            ticket_data = await self.get_ticket_data(guild, ticket_id)
+        member_tickets = await self.config.member(ctx.author).tickets()
+        for ticket_entry in member_tickets:
+            if ticket_entry.get("guild_id") == guild.id:
+                ticket_id = ticket_entry["ticket_id"]
+                ticket_data = await self.get_ticket_data(guild, ticket_id)
+                if ticket_data:
+                    break
         
         # Wenn nicht, prüfen ob Channel ein Ticket ist
         if not ticket_data:
