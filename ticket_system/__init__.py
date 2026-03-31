@@ -336,12 +336,14 @@ Geschlossen: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}
             await ctx.send(f"❌ Fehler beim Erstellen des Tickets: {str(e)}")
             return
         
-        # Staff-Rolle hinzufügen
+        # Staff-Rolle hinzufügen (bei Forum-Posts nicht möglich, stattdessen pingen)
         staff_role_id = await self.config.guild(guild).staff_role()
+        staff_ping = ""
         if staff_role_id:
             staff_role = guild.get_role(staff_role_id)
             if staff_role:
-                await thread.add_user(staff_role)
+                staff_ping = f" {staff_role.mention}"
+                # add_user funktioniert nicht bei Forum-Posts, wir pingen stattdessen
         
         # DM mit User erstellen
         try:
@@ -381,13 +383,7 @@ Geschlossen: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}
         
         await ctx.send(embed=embed, delete_after=10)
         
-        # Staff-Benachrichtigung im Thread
-        staff_ping = ""
-        if staff_role_id:
-            staff_role = guild.get_role(staff_role_id)
-            if staff_role:
-                staff_ping = f" {staff_role.mention}"
-        
+        # Staff-Benachrichtigung im Thread (staff_ping wurde bereits oben gesetzt)
         await thread.send(
             f"🆕 **Neues Ticket #{ticket_id}**\n"
             f"User: {ctx.author.mention}{staff_ping}\n\n"
@@ -605,12 +601,14 @@ Geschlossen: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}
                 await channel.set_permissions(user, read_messages=True, send_messages=True)
                 await ctx.send(f"✅ {user.mention} wurde zum Ticket hinzugefügt.")
         else:
-            # Forum-Thread
+            # Forum-Thread - add_user funktioniert nur bei öffentlichen Threads
             thread = ctx.channel
             if isinstance(thread, discord.Thread):
                 try:
                     await thread.add_user(user)
                     await ctx.send(f"✅ {user.mention} wurde zum Ticket hinzugefügt.")
+                except discord.Forbidden:
+                    await ctx.send(f"⚠️ {user.mention} kann nicht zum Thread hinzugefügt werden. Dies ist nur bei öffentlichen Threads möglich.")
                 except Exception as e:
                     await ctx.send(f"❌ Fehler: {str(e)}")
     
