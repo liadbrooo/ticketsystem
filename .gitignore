@@ -1,1 +1,15 @@
-Nothing needs to be added to the .gitignore file based on the provided changes. The modification of 'ticket_system/__init__.py' does not require any new ignore rules, as it's a standard Python source file. The current .gitignore content remains unchanged.
+```
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Dependencies
+.venv/
+venv/
+env/
+.env
+.env.local
+.env.*
+```
