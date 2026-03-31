@@ -201,7 +201,7 @@ Geschlossen: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}
         
         await ctx.send(embed=embed)
     
-    @commands.command(name="ticket", aliases=["support", "hilfe", "help"])
+    @commands.command(name="ticket", aliases=["support", "newticket", "ticketöffnen"])
     async def ticket(self, ctx):
         """Öffnet ein neues Support-Ticket"""
         guild = ctx.guild
