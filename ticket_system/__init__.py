@@ -1,37 +1,103 @@
 """
-Ticket System Cog für RedBot
-Ein vollständiges Ticket-System mit Forum- und Classic-Mode,
+Ticket System Cog für RedBot - Version 2.0
+Ein vollständiges Ticket-System mit Panel-Auswahl, Forum- und Classic-Mode,
 DM-Weiterleitung, Staff-Chat und Transcript-Erstellung.
 """
 
 from redbot.core import commands, checks, Config
 from redbot.core.bot import Red
 from redbot.core.utils.chat_formatting import box, pagify
-from redbot.core.utils.menus import menu, DEFAULT_CONTROLS
 import discord
 from discord.ext import tasks
+from discord.ui import Button, View, Select
 import asyncio
 from datetime import datetime
 from typing import Optional, Dict, Any
 import io
+import re
+
+class TicketPanelSelect(Select):
+    """Auswahlmenü für Ticket-Panels"""
+    
+    def __init__(self, panels: list):
+        options = []
+        for panel in panels:
+            emoji = panel.get("emoji", "📧")
+            options.append(
+                discord.SelectOption(
+                    label=panel["name"],
+                    value=panel["id"],
+                    description=panel.get("description", "Support Ticket"),
+                    emoji=emoji
+                )
+            )
+        
+        super().__init__(
+            placeholder="Wähle eine Kategorie für dein Ticket...",
+            min_values=1,
+            max_values=1,
+            options=options
+        )
+        self.panels = panels
+    
+    async def callback(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        panel_id = self.values[0]
+        panel = next((p for p in self.panels if p["id"] == panel_id), None)
+        
+        if not panel:
+            await interaction.followup.send("❌ Ungültige Kategorie ausgewählt.", ephemeral=True)
+            return
+        
+        # Ticket erstellen
+        cog = self.view.cog
+        await cog._create_ticket_from_panel(interaction, panel)
+
+
+class TicketPanelView(View):
+    """View für das Ticket-Panel"""
+    
+    def __init__(self, cog, panels: list):
+        super().__init__(timeout=None)
+        self.cog = cog
+        self.add_item(TicketPanelSelect(panels))
+
+
+class TicketCloseButton(Button):
+    """Button zum Schließen eines Tickets"""
+    
+    def __init__(self):
+        super().__init__(
+            style=discord.ButtonStyle.danger,
+            label="Ticket schließen",
+            emoji="🔒",
+            custom_id="ticket_close"
+        )
+    
+    async def callback(self, interaction: discord.Interaction):
+        cog = self.view.cog
+        await cog._close_ticket_command(interaction)
+
 
 class TicketSystem(commands.Cog):
     """
     🎫 Ticket System - Ein professionelles Support-Ticket-System
     
     Features:
+    - Panel-System mit Kategorien (Allgemein, Bug Report, Team, etc.)
     - Forum Mode & Classic Channel Mode
     - DM-Kommunikation mit Usern (Forum Mode)
     - Nachrichten-Weiterleitung zwischen Staff-Thread/Kanal und User-DM
     - Prefix "." verhindert Weiterleitung an User (nur intern)
     - Automatische Transcript-Erstellung beim Schließen
     - Staff-Rollen Management
+    - Modernes UI mit Buttons und Select Menus
     - Vollständig auf Deutsch
     """
     
     def __init__(self, bot: Red):
         self.bot = bot
-        self.config = Config.get_conf(self, identifier=1234567890, force_registration=True)
+        self.config = Config.get_conf(self, identifier=9876543210, force_registration=True)
         
         default_guild = {
             "forum_channel": None,
@@ -40,7 +106,13 @@ class TicketSystem(commands.Cog):
             "log_channel": None,
             "mode": "forum",  # "forum" oder "classic"
             "ticket_counter": 0,
-            "open_tickets": {}  # ticket_id -> {user_id, channel_id/thread_id, dm_id}
+            "open_tickets": {},  # ticket_id -> {user_id, channel_id/thread_id, dm_id, panel_id}
+            "panels": [  # Standard Panels
+                {"id": "general", "name": "Allgemeiner Support", "description": "Für allgemeine Fragen und Hilfe", "emoji": "📧"},
+                {"id": "bug", "name": "Bug Report", "description": "Fehler melden", "emoji": "🐛"},
+                {"id": "team", "name": "Teamverwaltung", "description": "Anfragen an das Team", "emoji": "👥"},
+                {"id": "suggest", "name": "Vorschläge", "description": "Ideen und Vorschläge einreichen", "emoji": "💡"}
+            ]
         }
         self.config.register_guild(**default_guild)
         
@@ -51,7 +123,9 @@ class TicketSystem(commands.Cog):
         
         # Cache für aktive Tickets
         self.ticket_cache: Dict[int, Dict[str, Any]] = {}
-        self.message_cache: Dict[int, int] = {}  # message_id -> original_message_id
+        
+        # Persistent Views registrieren
+        self.bot.add_view(TicketCloseButton())
         
     async def get_ticket_data(self, guild: discord.Guild, ticket_id: int) -> Optional[Dict]:
         """Holt Ticket-Daten aus Config oder Cache"""
