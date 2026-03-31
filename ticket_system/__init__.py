@@ -63,6 +63,15 @@ class TicketPanelView(View):
         self.add_item(TicketPanelSelect(panels))
 
 
+class TicketCloseView(View):
+    """View für den Schließen-Button (persistent)"""
+    
+    def __init__(self, cog):
+        super().__init__(timeout=None)
+        self.cog = cog
+        self.add_item(TicketCloseButton())
+
+
 class TicketCloseButton(Button):
     """Button zum Schließen eines Tickets"""
     
@@ -125,8 +134,8 @@ class TicketSystem(commands.Cog):
         # Cache für aktive Tickets
         self.ticket_cache: Dict[int, Dict[str, Any]] = {}
         
-        # Persistent Views registrieren
-        self.bot.add_view(TicketCloseButton())
+        # Persistent Views registrieren (wird nach cog init aufgerufen)
+        # Die View wird später in setup() registriert, wenn cog bereit ist
         
     async def get_ticket_data(self, guild: discord.Guild, ticket_id: int) -> Optional[Dict]:
         """Holt Ticket-Daten aus Config oder Cache"""
@@ -699,53 +708,44 @@ Geschlossen: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}
         """Verarbeitet DM-Nachrichten vom User und leitet sie an den Thread weiter"""
         user = message.author
         
-        # Aktives Ticket des Users finden (neues System)
-        member_tickets = await self.config.member(user).tickets()
-        if not member_tickets:
-            return
-        
-        # Durchsuche alle Guilds nach dem passenden Ticket mit dieser DM-ID
-        for ticket_entry in member_tickets:
-            guild_id = ticket_entry.get("guild_id")
-            ticket_id = ticket_entry.get("ticket_id")
-            
-            # Finde das Guild
-            guild = self.bot.get_guild(guild_id)
-            if not guild:
-                continue
-            
-            ticket_data = await self.get_ticket_data(guild, ticket_id)
-            if ticket_data and ticket_data.get("dm_id") == message.channel.id:
-                thread_id = ticket_data.get("thread_id")
-                if thread_id:
-                    thread = guild.get_channel(thread_id)
-                    if thread:
-                        # Nachricht an Thread weiterleiten
-                        content = message.content
-                        
-                        # Dateien mitsenden
-                        files = []
-                        for attachment in message.attachments:
-                            try:
-                                file = await attachment.to_file()
-                                files.append(file)
-                            except Exception:
-                                pass
-                        
-                        # Embed für Kontext
-                        embed = discord.Embed(
-                            description=content if content else "[Kein Text]",
-                            color=discord.Color.blue(),
-                            timestamp=message.created_at
-                        )
-                        embed.set_author(name=user.name, icon_url=user.display_avatar.url)
-                        embed.set_footer(text=f"📩 Vom User (Ticket #{ticket_id})")
-                        
-                        try:
-                            await thread.send(content=f"📨 **Nachricht von {user.name}**:", embed=embed, files=files)
-                        except Exception as e:
-                            pass
-                        return
+        # Wir müssen durch ALLE Guilds suchen, da wir in DMs keinen Zugriff auf guild haben
+        # Suche nach einem Ticket das zu diesem User und dieser DM-ID passt
+        for guild in self.bot.guilds:
+            async with self.config.guild(guild).open_tickets() as tickets:
+                for ticket_id_str, ticket_data in tickets.items():
+                    # Prüfen ob dieses Ticket zum User und zur DM gehört
+                    if ticket_data.get("user_id") == user.id and ticket_data.get("dm_id") == message.channel.id:
+                        ticket_id = int(ticket_id_str)
+                        thread_id = ticket_data.get("thread_id")
+                        if thread_id:
+                            thread = guild.get_channel(thread_id)
+                            if thread:
+                                # Nachricht an Thread weiterleiten
+                                content = message.content
+                                
+                                # Dateien mitsenden
+                                files = []
+                                for attachment in message.attachments:
+                                    try:
+                                        file = await attachment.to_file()
+                                        files.append(file)
+                                    except Exception:
+                                        pass
+                                
+                                # Embed für Kontext
+                                embed = discord.Embed(
+                                    description=content if content else "[Kein Text]",
+                                    color=discord.Color.blue(),
+                                    timestamp=message.created_at
+                                )
+                                embed.set_author(name=user.name, icon_url=user.display_avatar.url)
+                                embed.set_footer(text=f"📩 Vom User (Ticket #{ticket_id})")
+                                
+                                try:
+                                    await thread.send(content=f"📨 **Nachricht von {user.name}**:", embed=embed, files=files)
+                                except Exception as e:
+                                    pass
+                                return
     
     async def _handle_ticket_message(self, message: discord.Message, guild: discord.Guild):
         """Verarbeitet Staff-Nachrichten im Ticket und leitet sie an DM weiter"""
@@ -920,4 +920,7 @@ Geschlossen: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}
 
 async def setup(bot: Red):
     """Lädt die Cog"""
-    await bot.add_cog(TicketSystem(bot))
+    cog = TicketSystem(bot)
+    # Persistent View registrieren, nachdem die Cog erstellt wurde
+    bot.add_view(TicketCloseView(cog))
+    await bot.add_cog(cog)
