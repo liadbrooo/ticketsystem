@@ -337,12 +337,17 @@ Geschlossen: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}
         
         # Thread im Forum erstellen
         try:
-            thread = await forum.create_thread(
+            # Bei Forum-Kanälen muss send() verwendet werden, nicht create_thread()
+            post = await forum.send(
                 name=f"🎫 Ticket #{ticket_id} - {ctx.author.name}",
-                content=f"👤 **User:** {ctx.author.mention}\n🆔 **ID:** #{ticket_id}\n⏰ **Eröffnet:** <t:{int(datetime.now().timestamp())}:R>\n\n📝 **Beschreibung:**\nBitte beschreibe dein Anliegen hier...",
-                applied_tags=[],  # Kann bei Bedarf angepasst werden
+                content=f"👤 **User:** {ctx.author.mention}\n🆔 **ID:** #{ticket_id}\n⏰ **Eröffnet:** <t:{int(datetime.now().timestamp())}:R>\n\n📝 **Beschreibung:**\nBitte beschreibe dein Anliegen hier...{staff_ping}",
+                applied_tags=[],
                 reason=f"Ticket von {ctx.author}"
             )
+            # Das zurückgegebene Objekt ist ThreadWithMessage, der eigentliche Thread ist .thread
+            thread = post.thread
+            if not thread:
+                raise RuntimeError("Konnte Thread nach Erstellung nicht finden")
         except Exception as e:
             await ctx.send(f"❌ Fehler beim Erstellen des Tickets: {str(e)}")
             return
