@@ -1,114 +1,96 @@
 # 🎫 Ticket System für RedBot
 
-Ein professionelles Ticket-System ähnlich wie TicketPilot, speziell entwickelt für RedBot.
+Ein professionelles, modernes Ticket-System mit Panel-Auswahl, DM-Weiterleitung und Transcript-Funktion.
 
 ## ✨ Features
 
-### Modi
-- **Forum Mode**: Erstellt einen Forum-Thread + private DM-Konversation mit dem User
-- **Classic Mode**: Erstellt einen privaten Textkanal nur für User und Staff
+### 📋 Panel-System
+- **Vorgefertigte Kategorien**: Allgemeiner Support, Bug Report, Teamverwaltung, Vorschläge
+- **Individuelle Panels**: Eigene Kategorien mit `!ticketsetup panel add` erstellen
+- **Moderne UI**: Select-Menü zur Kategorie-Auswahl
 
-### Kernfunktionen
-- 📨 **DM-Weiterleitung**: Nachrichten werden zwischen Thread/Kanal und User-DM weitergeleitet
-- 🔒 **Interne Nachrichten**: Setze `.` vor eine Nachricht um sie nur im Team zu behalten
-- 📄 **Transcripts**: Automatische Speicherung des gesamten Chats als `.txt`-Datei
-- 👥 **Staff-Rollen**: Konfigurierbare Rolle für Team-Zugriff
-- 🇩🇪 **Auf Deutsch**: Alle Befehle und Nachrichten auf Deutsch
+### 🔄 Zwei Betriebsmodi
+1. **Forum Mode** (Standard)
+   - Erstellt Forum-Thread für Staff
+   - Private DM mit User
+   - Nachrichten werden zwischen Thread und DM weitergeleitet
 
----
+2. **Classic Mode**
+   - Erstellt privaten Textkanal
+   - Nur User und Staff haben Zugriff
 
-## 📁 Installation
+### 💬 Nachrichten-Weiterleitung
+- **Staff antwortet im Thread/Kanal** → wird an User-DM gesendet (Forum Mode)
+- **Prefix "."**: Setze `.` vor eine Nachricht → bleibt nur intern, wird NICHT an User gesendet
+- **Dateianhänge**: Werden automatisch mit weitergeleitet
 
-1. Kopiere den Ordner `ticket_system` in deinen RedBot-Cogs-Ordner:
-   ```
-   [RedBot-Pfad]/cogs/ticket_system/
-   ```
+### 🔒 Ticket schließen
+- **Button**: Klick auf "🔒 Ticket schließen" Button
+- **Befehl**: `!close` oder `!schließen`
+- **Transcript**: Gesamter Chat wird als `.txt`-Datei im Log-Channel gespeichert
+- **Benachrichtigung**: User erhält DM über Schließung
 
-2. Lade die Cog mit folgendem Befehl:
-   ```
-   [p]load ticket_system
-   ```
+## 📥 Installation
 
----
+1. Ordner `ticket_system` in den Cogs-Ordner deines Redbots kopieren
+2. Cog laden: `[p]load ticket_system`
 
 ## ⚙️ Einrichtung
 
-Führe diese Befehle als Server-Owner aus:
-
 ```bash
-# Forum-Channel setzen (für Forum Mode)
-[p]ticketsetup forum #dein-forum-channel
-
-# Kategorie setzen (für Classic Mode)
-[p]ticketsetup category Deine-Kategorie
-
-# Staff-Rolle festlegen
-[p]ticketsetup role @Support-Team
-
-# Log-Channel für Transcripts
-[p]ticketsetup log #log-channel
-
-# Modus wählen: "forum" oder "classic"
-[p]ticketsetup mode forum
+# Basis-Konfiguration
+[p]ticketsetup forum #forum-channel      # Forum-Channel setzen (für Forum Mode)
+[p]ticketsetup category <Kategorie>       # Kategorie setzen (für Classic Mode)
+[p]ticketsetup role @Staff                # Staff-Rolle festlegen
+[p]ticketsetup log #log-channel           # Channel für Transcripts
+[p]ticketsetup mode forum                 # oder "classic"
 
 # Konfiguration anzeigen
 [p]ticketsetup show
-```
 
----
+# Panel-Verwaltung
+[p]ticketsetup panel list                 # Alle Panels anzeigen
+[p]ticketsetup panel add <id> <Name>      # Neues Panel erstellen
+[p]ticketsetup panel remove <id>          # Panel entfernen
+```
 
 ## 📖 Verwendung
 
-### Für User
+### Für Benutzer
 | Befehl | Beschreibung |
 |--------|--------------|
-| `!ticket` | Öffnet ein neues Support-Ticket |
-| `!support` | Alias für !ticket |
-| `!hilfe` | Alias für !ticket |
-| `!close` | Schließt das aktuelle Ticket |
-| `!schließen` | Alias für !close |
-
-### Für Staff
-| Befehl | Beschreibung |
-|--------|--------------|
-| `.Nachricht` | Sendet eine NUR interne Nachricht (nicht an User) |
-| `!add @User` | Fügt Benutzer zum Ticket hinzu |
-| `!remove @User` | Entfernt Benutzer aus dem Ticket |
-| `!close` | Schließt das Ticket & erstellt Transcript |
+| `!ticket`, `!support`, `!newticket` | Öffnet Ticket mit Kategorie-Auswahl |
+| `!close`, `!schließen` | Schließt das eigene Ticket |
 | `!ticketinfo` | Zeigt Informationen zum aktuellen Ticket |
 
----
+### Für Staff
+| Aktion | Beschreibung |
+|--------|--------------|
+| Im Thread antworten | Nachricht wird an User (DM) weitergeleitet |
+| `.Nachricht` | Mit Punkt-Präfix: Nur intern, nicht an User |
+| `!add @User` | Benutzer zum Ticket hinzufügen (Classic Mode) |
+| `!remove @User` | Benutzer aus Ticket entfernen (Classic Mode) |
+| Auf 🔒 klicken | Ticket über Button schließen |
 
-## 🔄 Funktionsweise
+## 🔧 Standard-Panels
 
-### Forum Mode
-1. User öffnet Ticket mit `!ticket`
-2. Bot erstellt Forum-Thread + sendet DM an User
-3. Staff antwortet im Thread → wird an User-DM weitergeleitet
-4. User antwortet per DM → wird im Thread angezeigt
-5. Bei `.` Prefix bleibt Nachricht nur im Thread (intern)
-6. Beim Schließen wird Transcript im Log-Channel gespeichert
-
-### Classic Mode
-1. User öffnet Ticket mit `!ticket`
-2. Bot erstellt privaten Kanal (nur User + Staff)
-3. Alle kommunizieren im Kanal
-4. Bei `.` Prefix bleibt Nachricht nur intern sichtbar
-5. Beim Schließen wird Kanal gelöscht + Transcript gespeichert
-
----
+| ID | Name | Emoji | Beschreibung |
+|----|------|-------|--------------|
+| `general` | Allgemeiner Support | 📧 | Für allgemeine Fragen und Hilfe |
+| `bug` | Bug Report | 🐛 | Fehler melden |
+| `team` | Teamverwaltung | 👥 | Anfragen an das Team |
+| `suggest` | Vorschläge | 💡 | Ideen und Vorschläge einreichen |
 
 ## 💡 Tipps
 
-- **Interne Diskussionen**: Verwende `.Wir sollten das intern besprechen` um nur mit dem Team zu chatten
-- **Dateien**: Bilder und Anhänge werden automatisch mitgesendet
-- **Transcripts**: Alle geschlossenen Tickets werden im Log-Channel als Datei gespeichert
-- **Mehrere Tickets**: Jeder User kann nur ein aktives Ticket gleichzeitig haben
+- **Interne Notizen**: Verwende `.` am Anfang einer Nachricht für interne Absprachen im Team
+- **Berechtigungen**: Stelle sicher, dass der Bot Berechtigungen hat, Channels/Threads zu erstellen
+- **DMs**: User müssen DMs vom Server erlaubt haben für die Weiterleitung
+- **Logs**: Richte einen Log-Channel ein, um alle Transcripts zu speichern
 
----
+## ❓ Support
 
-## 🛠️ Support
-
-Bei Problemen oder Fragen wende dich an den RedBot-Support oder überprüfe die Logs deines Bots.
-
-**Viel Erfolg mit deinem Ticket-System!** 🎉
+Bei Problemen prüfe:
+1. Ist der Cog geladen? `[p]loadedcogs`
+2. Ist die Konfiguration vollständig? `[p]ticketsetup show`
+3. Hat der Bot alle notwendigen Berechtigungen?
