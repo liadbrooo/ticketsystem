@@ -204,6 +204,12 @@ Geschlossen: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}
     @commands.command(name="ticket", aliases=["support", "newticket", "ticketöffnen"])
     async def ticket(self, ctx):
         """Öffnet ein neues Support-Ticket"""
+        
+        # Schutz vor Ausführung in DMs
+        if not isinstance(ctx.author, discord.Member) or ctx.guild is None:
+            await ctx.send("❌ Dieser Befehl kann nur innerhalb eines Servers verwendet werden.")
+            return
+            
         guild = ctx.guild
         
         # Prüfen ob User bereits ein offenes Ticket hat
