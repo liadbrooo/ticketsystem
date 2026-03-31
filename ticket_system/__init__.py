@@ -244,10 +244,11 @@ Geschlossen: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}
             await ctx.send("❌ Der konfigurierte Forum-Channel wurde nicht gefunden.")
             return
         
-        # Ticket-ID generieren
-        async with self.config.guild(guild).ticket_counter() as counter:
-            counter += 1
-            ticket_id = counter
+        # Ticket-ID generieren (Counter sicher inkrementieren ohne async with)
+        current_count = await self.config.guild(guild).ticket_counter()
+        new_count = current_count + 1
+        await self.config.guild(guild).ticket_counter.set(new_count)
+        ticket_id = new_count
         
         # Thread im Forum erstellen
         try:
@@ -336,10 +337,11 @@ Geschlossen: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}
             await ctx.send("❌ Die konfigurierte Kategorie wurde nicht gefunden.")
             return
         
-        # Ticket-ID generieren
-        async with self.config.guild(guild).ticket_counter() as counter:
-            counter += 1
-            ticket_id = counter
+        # Ticket-ID generieren (Counter sicher inkrementieren ohne async with)
+        current_count = await self.config.guild(guild).ticket_counter()
+        new_count = current_count + 1
+        await self.config.guild(guild).ticket_counter.set(new_count)
+        ticket_id = new_count
         
         # Privaten Kanal erstellen
         overwrites = {
