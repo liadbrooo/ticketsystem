@@ -1,22 +1,24 @@
-```gitignore
+```
 # Python
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
 
-# Dependencies
-venv/
+# Environment
 .venv/
+venv/
 .env
 .env.local
-.env.*
+*.env.*
 
-# Logs and temp files
+# Logs
 *.log
-*.tmp
 
 # Editors
 .vscode/
 .idea/
+
+# Dependencies
+node_modules/
 ```

@@ -307,7 +307,11 @@ Geschlossen: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}
                     channel_id = ticket_data.get("channel_id") or ticket_data.get("thread_id")
                     channel = guild.get_channel(channel_id)
                     if channel:
-                        await ctx.send(f"ℹ️ Du hast bereits ein offenes Ticket: {channel.mention}")
+                        await ctx.send(
+                            f"ℹ️ Du hast bereits ein offenes Ticket: {channel.mention}\n\n"
+                            f"**Wichtig:** Antworte in deinen DMs auf dieses Ticket!",
+                            ephemeral=True
+                        )
                         return
         
         mode = await self.config.guild(guild).mode()
@@ -378,12 +382,13 @@ Geschlossen: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}
             dm_channel = await ctx.author.create_dm()
             await dm_channel.send(
                 f"🎫 **Dein Ticket #{ticket_id} wurde eröffnet!**\n\n"
-                f"Unser Support-Team wird sich bald bei dir melden.\n"
-                f"Du kannst hier direkt antworten und deine Nachricht wird an das Team im Thread weitergeleitet.\n\n"
+                f"**WICHTIG:** Antworte AUSSCHLIESSLICH in dieser Direktnachricht!\n"
+                f"Deine Nachrichten werden automatisch an das Support-Team im Thread weitergeleitet.\n"
+                f"Schreibe NICHT direkt im Thread - dies ist nur für das Support-Team.\n\n"
                 f"Verwende `!close` oder `!schließen` um das Ticket zu schließen."
             )
         except Exception as e:
-            await ctx.send("⚠️ Ich konnte dir keine DM senden. Bitte aktiviere DMs von Server-Mitgliedern.")
+            await ctx.send("⚠️ Ich konnte dir keine DM senden. Bitte aktiviere DMs von Server-Mitgliedern.", ephemeral=True)
             dm_channel = None
         
         # Ticket-Daten speichern (mit guild_id für DM-Lookup)
@@ -399,34 +404,40 @@ Geschlossen: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}
         
         # Caches aktualisieren für schnelle Lookups
         if dm_channel:
-            self.dm_cache[dm_channel.id] = ticket_data
-        self.thread_cache[thread.id] = ticket_data
+            self.dm_cache[dm_channel.id] = {"guild_id": guild.id, "ticket_id": ticket_id, **ticket_data}
+        self.thread_cache[thread.id] = {"guild_id": guild.id, "ticket_id": ticket_id, **ticket_data}
         
         # Member-Ticket-Zuordnung speichern (neues System)
         member_tickets = await self.config.member(ctx.author).tickets()
         member_tickets.append({"guild_id": guild.id, "ticket_id": ticket_id})
         await self.config.member(ctx.author).tickets.set(member_tickets)
         
-        # Bestätigung
+        # Bestätigung - NUR für den User sichtbar (ephemeral)
         embed = discord.Embed(
-            title="🎫 Ticket eröffnet!",
-            description=f"Dein Ticket **#{ticket_id}** wurde erfolgreich erstellt.",
+            title="🎫 Ticket erfolgreich erstellt!",
+            description=f"Dein Ticket **#{ticket_id}** wurde eröffnet.",
             color=discord.Color.green()
         )
-        embed.add_field(name="📍 Thread", value=thread.mention, inline=False)
-        embed.add_field(name="💬 DM", value="Aktiviert" if dm_channel else "Nicht verfügbar", inline=True)
-        embed.add_field(name="👥 Support", value="Das Team wurde benachrichtigt.", inline=True)
-        embed.set_footer(text="Antworte einfach hier oder per DM!")
+        embed.add_field(
+            name="📌 Wichtiger Hinweis",
+            value="Du musst jetzt in deinen **Direktnachrichten (DMs)** antworten!\n"
+                  "Öffne deine DMs mit dem Bot und schreibe dort dein Anliegen.\n"
+                  "Der Thread hier ist nur für das Support-Team sichtbar.",
+            inline=False
+        )
+        embed.set_footer(text="Überprüfe deine DMs!")
         embed.timestamp = datetime.now()
         
-        await ctx.send(embed=embed, delete_after=10)
+        await ctx.send(embed=embed, ephemeral=True)
         
         # Staff-Benachrichtigung im Thread (staff_ping wurde bereits oben gesetzt)
         await thread.send(
             f"🆕 **Neues Ticket #{ticket_id}**\n"
             f"User: {ctx.author.mention}{staff_ping}\n\n"
-            f"💡 **Info:** \n"
-            f"- Antworten hier werden als DM an den User gesendet\n"
+            f"💡 **WICHTIG für Staff:** \n"
+            f"- Der User sieht diesen Thread NICHT und kann hier nicht schreiben!\n"
+            f"- Alle Antworten des Users kommen via DM - antworte HIER im Thread\n"
+            f"- Deine Nachrichten werden automatisch als DM an den User gesendet\n"
             f"- Setze ein `.` vor deine Nachricht, um sie nur intern zu behalten\n"
             f"- Verwende `!close` zum Schließen des Tickets"
         )
@@ -528,8 +539,12 @@ Geschlossen: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}
             f"- Verwende `!close` zum Schließen des Tickets"
         )
         
-        # Bestätigung für User
-        await ctx.send(f"✅ Dein Ticket wurde erstellt: {channel.mention}", delete_after=10)
+        # Bestätigung für User - ephemeral damit nur der User es sieht
+        await ctx.send(
+            f"✅ Dein Ticket wurde erstellt: {channel.mention}\n\n"
+            f"**Hinweis:** Du kannst in diesem Channel schreiben und das Team wird dir antworten.",
+            ephemeral=True
+        )
     
     @commands.command(name="close", aliases=["schließen", "close ticket"])
     async def close_ticket(self, ctx):
@@ -560,7 +575,11 @@ Geschlossen: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}
                         break
             
             if not ticket_data:
-                await ctx.send("❌ Du hast kein aktives Ticket.")
+                await ctx.send(
+                    "❌ Du hast kein aktives Ticket.\n\n"
+                    "Verwende `!ticket` um ein neues Ticket zu erstellen.",
+                    ephemeral=True
+                )
                 return
         
         # Kanal/Thread finden
@@ -622,7 +641,12 @@ Geschlossen: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}
         if dm_id and dm_id in self.dm_cache:
             del self.dm_cache[dm_id]
         
-        await ctx.send(f"✅ **Ticket #{ticket_id} wurde geschlossen.**\nDas Transcript wurde im Log-Channel gespeichert.")
+        await ctx.send(
+            f"✅ **Ticket #{ticket_id} wurde geschlossen.**\n\n"
+            f"Das Transcript wurde im Log-Channel gespeichert.\n"
+            f"Falls du weitere Hilfe benötigst, erstelle einfach ein neues Ticket mit `!ticket`.",
+            ephemeral=True
+        )
     
     async def _remove_member_ticket(self, member: discord.Member, guild_id: int, ticket_id: int):
         """Entfernt ein Ticket aus der Member-Datenliste"""
@@ -768,15 +792,36 @@ Geschlossen: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}
         # Kein Ticket gefunden - User informieren dass er zuerst !ticket verwenden muss
         # WICHTIG: Diese Nachricht sollte nur kommen wenn der User wirklich KEIN Ticket hat
         # und nicht wenn er einfach in seinen DMs schreibt OHNE Ticket
-        try:
-            await message.channel.send(
-                "⚠️ **Kein aktives Ticket gefunden!**\n\n"
-                "Du hast derzeit kein offenes Ticket auf einem Server.\n"
-                "Bitte gehe auf einen Server und verwende dort `!ticket` um ein neues Ticket zu erstellen.\n\n"
-                "**Wichtig:** Nach dem Erstellen eines Tickets wirst du hier in deinen DMs mit dem Support-Team kommunizieren."
-            )
-        except Exception:
-            pass
+        # Wir prüfen zusätzlich ob der User überhaupt Tickets in der Member-Config hat
+        member_tickets = await self.config.member(user).tickets()
+        has_any_ticket = len(member_tickets) > 0
+        
+        if not has_any_ticket:
+            # User hat noch nie ein Ticket erstellt - hilfreiche Anleitung
+            try:
+                await message.channel.send(
+                    "⚠️ **Kein aktives Ticket gefunden!**\n\n"
+                    "Du hast derzeit kein offenes Ticket auf einem Server.\n"
+                    "Bitte gehe auf einen Server und verwende dort `!ticket` um ein neues Ticket zu erstellen.\n\n"
+                    "**So funktioniert's:**\n"
+                    "1. Gehe auf unseren Discord-Server\n"
+                    "2. Schreibe `!ticket` in einen beliebigen Channel\n"
+                    "3. Du erhältst eine DM von mir - antworte AUSSCHLIESSLICH dort!\n\n"
+                    "**Wichtig:** Nach dem Erstellen eines Tickets wirst du hier in deinen DMs mit dem Support-Team kommunizieren."
+                )
+            except Exception:
+                pass
+        else:
+            # User hat/hatte Tickets, aber keines ist aktuell aktiv - spezieller Hinweis
+            try:
+                await message.channel.send(
+                    "⚠️ **Kein aktives Ticket gefunden!**\n\n"
+                    "Du hast bereits Tickets erstellt, aber derzeit ist keines davon aktiv.\n"
+                    "Möglicherweise wurde dein letztes Ticket geschlossen.\n\n"
+                    "Bitte erstelle ein neues Ticket mit `!ticket` auf dem Server."
+                )
+            except Exception:
+                pass
     
     async def _forward_dm_to_thread(self, message: discord.Message, thread: discord.Thread, user: discord.User, ticket_data: Dict):
         """Leitet eine DM-Nachricht an den Thread weiter"""
