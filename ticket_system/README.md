@@ -167,5 +167,18 @@ Bei Problemen prüfe:
 
 ### Team sieht nicht wer geschrieben hat
 - Jede Nachricht vom User wird mit seinem Discord-Namen und Avatar angezeigt
-- Webhook nutzt die echten User-Daten für maximale Authentizität
+- Webhook nutzt die echten User-Daten (display_name + display_avatar) für maximale Authentizität
 - Bei Fallback-Modus wird der Name explizit im Text erwähnt ("📨 **User.Name**: Nachricht")
+- **Wichtig**: Der Bot verwendet `user.display_name` statt `user.name` für korrekte Anzeige von Nicknames
+
+### Nachrichten werden doppelt oder gar nicht angezeigt
+- Das System sendet jetzt NUR EINE Nachricht pro Weiterleitung
+- Bei Textnachrichten: Reiner Text wird gesendet (kein zusätzliches Embed)
+- Bei leeren Nachrichten (nur Bilder): Embed mit "Nachricht vom User" Hinweis
+- Files/Anhänge werden immer korrekt mitgesendet
+- Webhook wird nach 0.5 Sekunden automatisch gelöscht um Spam zu vermeiden
+
+### Avatar wird nicht angezeigt
+- Der Bot prüft sicher ob ein Avatar existiert bevor er ihn verwendet
+- Fallback: Wenn kein Avatar vorhanden ist, wird das Standard-Discord-Avatar-Icon genutzt
+- Bei Webhook-Fehlern wird im Fallback-Modus trotzdem der Name korrekt angezeigt

@@ -839,53 +839,85 @@ Geschlossen: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}
             except Exception:
                 pass
         
-        # Embed für Kontext - IMMER erstellen
-        embed = discord.Embed(
-            description=content if content else " ",
-            color=discord.Color.blue(),
-            timestamp=message.created_at
-        )
-        embed.set_author(name=user.name, icon_url=user.display_avatar.url if user.display_avatar else None)
-        embed.set_footer(text=f"📩 Vom User (Ticket)")
-        
-        # Falls es Anhänge gibt, diese im Embed erwähnen
-        if files:
-            embed.add_field(name="📎", value=f"{len(files)} Anhang/Anhänge", inline=False)
-        
         try:
-            # Webhook erstellen und senden
-            webhook_name = user.name[:32]  # Discord Limit
+            # Webhook erstellen mit korrektem Namen und Avatar
+            webhook_name = user.display_name[:32]  # Discord Limit für Namen
             
-            # Avatar URL sicher handhaben
-            avatar_url = str(user.display_avatar.url) if user.display_avatar else None
+            # Avatar URL sicher handhaben - None wenn kein Avatar
+            avatar_url = None
+            if user.display_avatar:
+                try:
+                    avatar_url = user.display_avatar.url
+                except Exception:
+                    pass
             
-            webhook = await thread.create_webhook(name=webhook_name, avatar=avatar_url)
-            
-            # Content und Embed gemeinsam senden (nicht entweder/oder)
-            await webhook.send(
-                content=content if content else None,
-                embed=embed,
-                files=files if files else None,
-                username=webhook_name
+            # Webhook erstellen
+            webhook = await thread.create_webhook(
+                name=webhook_name,
+                avatar=avatar_url,
+                reason=f"Ticket-Nachricht von {user.name}"
             )
-            await webhook.delete()
-        except discord.Forbidden:
-            # Keine Webhook-Berechtigung - Fallback
+            
+            # Nur EINMAL senden - entweder mit Content ODER nur Embed wenn kein Content
+            # Aber beides zusammen wenn Content UND Files existieren
+            send_kwargs = {
+                'username': webhook_name,
+            }
+            
+            # Content hinzufügen wenn vorhanden
+            if content and content.strip():
+                send_kwargs['content'] = content
+            
+            # Files hinzufügen wenn vorhanden
+            if files:
+                send_kwargs['files'] = files
+            
+            # Embed nur wenn es zusätzlichen Kontext bietet (bei leeren Nachrichten oder nur Files)
+            if not content or not content.strip():
+                # Keine Textnachricht, nur Files oder leere Nachricht
+                embed = discord.Embed(
+                    description="📨 *Nachricht vom User*",
+                    color=discord.Color.blue(),
+                    timestamp=message.created_at
+                )
+                embed.set_author(name=user.name, icon_url=avatar_url)
+                if files:
+                    embed.add_field(name="📎", value=f"{len(files)} Anhang/Anhänge", inline=False)
+                send_kwargs['embed'] = embed
+            
+            # Nachricht senden
+            await webhook.send(**send_kwargs)
+            
+            # Webhook wieder löschen (kurz warten damit Discord die Nachricht verarbeitet hat)
+            await asyncio.sleep(0.5)
             try:
-                fallback_content = f"📨 **Nachricht von {user.name}**:"
-                if content:
-                    fallback_content += f"\n{content}"
-                await thread.send(content=fallback_content, embed=embed if not content else None, files=files if files else None)
+                await webhook.delete()
+            except Exception:
+                pass  # Ignorieren wenn Löschen fehlschlägt
+                
+        except discord.Forbidden:
+            # Keine Webhook-Berechtigung - Fallback mit normalem Senden
+            try:
+                fallback_parts = []
+                if content and content.strip():
+                    fallback_parts.append(content)
+                
+                # Hinweis auf Absender
+                sender_info = f"— *{user.display_name}*"
+                
+                full_content = "\n".join(fallback_parts) + "\n" + sender_info if fallback_parts else f"📨 *Nachricht von {user.display_name}*"
+                
+                await thread.send(content=full_content, files=files if files else None)
             except Exception as e:
-                print(f"Fehler beim Senden an Thread (Fallback): {e}")
+                print(f"Fehler beim Fallback-Senden an Thread: {e}")
         except Exception as e:
             # Allgemeiner Fehler - versuche einfaches Senden
-            print(f"Webhook-Fehler: {e}")
+            print(f"Webhook-Fehler bei Ticket #{ticket_data.get('ticket_id', '?')}: {e}")
             try:
-                fallback_text = f"📨 **{user.name}**: {content}" if content else f"📨 **{user.name}** hat eine Nachricht gesendet."
+                fallback_text = f"📨 **{user.display_name}**: {content}" if content and content.strip() else f"📨 **{user.display_name}** hat eine Nachricht gesendet."
                 await thread.send(content=fallback_text, files=files if files else None)
             except Exception as e2:
-                print(f"Fehler beim Senden an Thread: {e2}")
+                print(f"Fehler beim einfachen Senden an Thread: {e2}")
     
     async def _handle_ticket_message(self, message: discord.Message, guild: discord.Guild):
         """Verarbeitet Staff-Nachrichten im Ticket und leitet sie an DM weiter"""
