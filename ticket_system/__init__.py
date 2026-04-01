@@ -131,8 +131,10 @@ class TicketSystem(commands.Cog):
         }
         self.config.register_member(**default_member)
         
-        # Cache für aktive Tickets
-        self.ticket_cache: Dict[int, Dict[str, Any]] = {}
+        # Cache für schnelle DM-Lookups (dm_id -> ticket_data)
+        self.dm_cache: Dict[int, Dict[str, Any]] = {}
+        # Cache für Thread-Lookups (thread_id -> ticket_data)
+        self.thread_cache: Dict[int, Dict[str, Any]] = {}
         
         # Persistent Views registrieren (wird nach cog init aufgerufen)
         # Die View wird später in setup() registriert, wenn cog bereit ist
@@ -329,37 +331,36 @@ Geschlossen: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}
             await ctx.send("❌ Der konfigurierte Forum-Channel wurde nicht gefunden.")
             return
         
-        # Ticket-ID generieren (Counter sicher inkrementieren ohne async with)
+        # Ticket-ID generieren
         current_count = await self.config.guild(guild).ticket_counter()
         new_count = current_count + 1
         await self.config.guild(guild).ticket_counter.set(new_count)
         ticket_id = new_count
         
-        # Thread im Forum erstellen
-        try:
-            # Bei Forum-Kanälen muss send() verwendet werden, nicht create_thread()
-            post = await forum.send(
-                name=f"🎫 Ticket #{ticket_id} - {ctx.author.name}",
-                content=f"👤 **User:** {ctx.author.mention}\n🆔 **ID:** #{ticket_id}\n⏰ **Eröffnet:** <t:{int(datetime.now().timestamp())}:R>\n\n📝 **Beschreibung:**\nBitte beschreibe dein Anliegen hier...{staff_ping}",
-                applied_tags=[],
-                reason=f"Ticket von {ctx.author}"
-            )
-            # Das zurückgegebene Objekt ist ThreadWithMessage, der eigentliche Thread ist .thread
-            thread = post.thread
-            if not thread:
-                raise RuntimeError("Konnte Thread nach Erstellung nicht finden")
-        except Exception as e:
-            await ctx.send(f"❌ Fehler beim Erstellen des Tickets: {str(e)}")
-            return
-        
-        # Staff-Rolle hinzufügen (bei Forum-Posts nicht möglich, stattdessen pingen)
+        # Staff-Rolle VOR dem Senden holen
         staff_role_id = await self.config.guild(guild).staff_role()
         staff_ping = ""
         if staff_role_id:
             staff_role = guild.get_role(staff_role_id)
             if staff_role:
                 staff_ping = f" {staff_role.mention}"
-                # add_user funktioniert nicht bei Forum-Posts, wir pingen stattdessen
+        
+        # Thread im Forum erstellen
+        try:
+            # In Discord.py 2.x verwendet man create_thread() für Forum-Kanäle
+            post = await forum.create_thread(
+                name=f"Ticket #{ticket_id} - {ctx.author.name}",
+                content=f"User: {ctx.author.mention}\nID: #{ticket_id}\nErstellt: <t:{int(datetime.now().timestamp())}:R>\n\nBitte beschreibe dein Anliegen hier...{staff_ping}",
+                applied_tags=[],
+                reason=f"Ticket von {ctx.author}"
+            )
+            # create_thread gibt direkt einen Thread zurück (kein ThreadWithMessage)
+            thread = post
+            if not thread or not hasattr(thread, 'id'):
+                raise RuntimeError("Konnte Thread nach Erstellung nicht finden")
+        except Exception as e:
+            await ctx.send(f"Fehler beim Erstellen des Tickets: {str(e)}")
+            return
         
         # DM mit User erstellen
         try:
@@ -384,6 +385,11 @@ Geschlossen: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}
             "mode": "forum"
         }
         await self.save_ticket_data(guild, ticket_id, ticket_data)
+        
+        # Caches aktualisieren für schnelle Lookups
+        if dm_channel:
+            self.dm_cache[dm_channel.id] = ticket_data
+        self.thread_cache[thread.id] = ticket_data
         
         # Member-Ticket-Zuordnung speichern (neues System)
         member_tickets = await self.config.member(ctx.author).tickets()
@@ -597,6 +603,14 @@ Geschlossen: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}
         if user:
             await self._remove_member_ticket(user, guild.id, ticket_id)
         
+        # Caches bereinigen
+        thread_id = ticket_data.get("thread_id")
+        dm_id = ticket_data.get("dm_id")
+        if thread_id and thread_id in self.thread_cache:
+            del self.thread_cache[thread_id]
+        if dm_id and dm_id in self.dm_cache:
+            del self.dm_cache[dm_id]
+        
         await ctx.send(f"✅ **Ticket #{ticket_id} wurde geschlossen.**\nDas Transcript wurde im Log-Channel gespeichert.")
     
     async def _remove_member_ticket(self, member: discord.Member, guild_id: int, ticket_id: int):
@@ -713,49 +727,70 @@ Geschlossen: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}
         """Verarbeitet DM-Nachrichten vom User und leitet sie an den Thread weiter"""
         user = message.author
         
-        # Wir müssen durch ALLE Guilds suchen, da wir in DMs keinen Zugriff auf guild haben
-        # Suche nach einem Ticket das zu diesem User und dieser DM-ID passt
+        # Erster Versuch: Cache durchsuchen (schnell)
+        if message.channel.id in self.dm_cache:
+            ticket_data = self.dm_cache[message.channel.id]
+            guild = self.bot.get_guild(ticket_data.get("guild_id"))
+            if guild:
+                thread_id = ticket_data.get("thread_id")
+                thread = guild.get_channel(thread_id)
+                if thread:
+                    await self._forward_dm_to_thread(message, thread, user, ticket_data)
+                    return
+        
+        # Zweiter Versuch: Alle Guilds durchsuchen (falls Cache veraltet)
         for guild in self.bot.guilds:
             async with self.config.guild(guild).open_tickets() as tickets:
                 for ticket_id_str, ticket_data in tickets.items():
-                    # Prüfen ob dieses Ticket zum User und zur DM gehört
                     if ticket_data.get("user_id") == user.id and ticket_data.get("dm_id") == message.channel.id:
                         ticket_id = int(ticket_id_str)
                         thread_id = ticket_data.get("thread_id")
                         if thread_id:
                             thread = guild.get_channel(thread_id)
                             if thread:
-                                # Nachricht an Thread weiterleiten
-                                content = message.content
-                                
-                                # Dateien mitsenden
-                                files = []
-                                for attachment in message.attachments:
-                                    try:
-                                        file = await attachment.to_file()
-                                        files.append(file)
-                                    except Exception:
-                                        pass
-                                
-                                # Embed für Kontext
-                                embed = discord.Embed(
-                                    description=content if content else "[Kein Text]",
-                                    color=discord.Color.blue(),
-                                    timestamp=message.created_at
-                                )
-                                embed.set_author(name=user.name, icon_url=user.display_avatar.url)
-                                embed.set_footer(text=f"📩 Vom User (Ticket #{ticket_id})")
-                                
-                                try:
-                                    await thread.send(content=f"📨 **Nachricht von {user.name}**:", embed=embed, files=files)
-                                except Exception as e:
-                                    pass
+                                # Cache aktualisieren
+                                self.dm_cache[message.channel.id] = ticket_data
+                                self.thread_cache[thread_id] = ticket_data
+                                await self._forward_dm_to_thread(message, thread, user, ticket_data)
                                 return
+    
+    async def _forward_dm_to_thread(self, message: discord.Message, thread: discord.Thread, user: discord.User, ticket_data: Dict):
+        """Leitet eine DM-Nachricht an den Thread weiter"""
+        content = message.content
+        
+        # Dateien mitsenden
+        files = []
+        for attachment in message.attachments:
+            try:
+                file = await attachment.to_file()
+                files.append(file)
+            except Exception:
+                pass
+        
+        # Embed für Kontext
+        embed = discord.Embed(
+            description=content if content else "[Kein Text]",
+            color=discord.Color.blue(),
+            timestamp=message.created_at
+        )
+        embed.set_author(name=user.name, icon_url=user.display_avatar.url)
+        embed.set_footer(text=f"📩 Vom User (Ticket)")
+        
+        try:
+            await thread.send(content=f"📨 **Nachricht von {user.name}**:", embed=embed, files=files)
+        except Exception as e:
+            pass  # Fehler ignorieren
     
     async def _handle_ticket_message(self, message: discord.Message, guild: discord.Guild):
         """Verarbeitet Staff-Nachrichten im Ticket und leitet sie an DM weiter"""
         
-        # Prüfen ob Nachricht in einem Ticket-Kanal/Thread ist
+        # Erster Versuch: Cache durchsuchen (schnell)
+        if message.channel.id in self.thread_cache:
+            ticket_data = self.thread_cache[message.channel.id]
+            await self._process_and_forward_to_dm(message, ticket_data, guild)
+            return
+        
+        # Zweiter Versuch: Config durchsuchen
         ticket_data = None
         ticket_id = None
         
@@ -765,33 +800,34 @@ Geschlossen: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}
                 if channel_id == message.channel.id:
                     ticket_id = int(tid)
                     ticket_data = data
+                    # Cache aktualisieren
+                    self.thread_cache[channel_id] = data
                     break
         
         if not ticket_data:
             return
         
+        await self._process_and_forward_to_dm(message, ticket_data, guild)
+    
+    async def _process_and_forward_to_dm(self, message: discord.Message, ticket_data: Dict, guild: discord.Guild):
+        """Verarbeitet und leitet Nachricht an DM weiter"""
+        
         # Prüfen ob Nachricht mit "." beginnt (intern, nicht weiterleiten)
         if message.content.startswith('.'):
-            # Nachricht bleibt nur im Ticket, wird aber bereinigt gesendet
-            # Entferne das "." am Anfang
             new_content = message.content[1:].lstrip()
             
-            if new_content != message.content[1:]:  # Wenn sich was geändert hat
-                # Lösche originale und sende neue ohne "."
+            if new_content != message.content[1:]:
                 try:
                     await message.delete()
                     await message.channel.send(
                         content=new_content,
-                        reference=message.reference  # Reply beibehalten falls vorhanden
+                        reference=message.reference
                     )
                 except Exception:
-                    # Falls löschen nicht klappt, einfach editieren
                     await message.edit(content=new_content)
-            
-            # Nicht an User weiterleiten - fertig
             return
         
-        # Staff-Rolle prüfen (optional, könnte auch jeder im Channel dürfen)
+        # Staff-Rolle prüfen
         staff_role_id = await self.config.guild(guild).staff_role()
         is_staff = False
         if staff_role_id:
@@ -799,7 +835,7 @@ Geschlossen: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}
             if staff_role and staff_role in message.author.roles:
                 is_staff = True
         else:
-            is_staff = True  # Wenn keine Rolle konfiguriert, alle erlauben
+            is_staff = True
         
         if not is_staff:
             return
