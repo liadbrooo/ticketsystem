@@ -738,24 +738,20 @@ Geschlossen: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}
         if message.author.bot:
             return
         
-        # Ignoriere Commands
-        if message.content.startswith(('!', '?', '.', '/')):
-            # Aber verarbeite Nachrichten die NUR mit "." beginnen (Prefix für interne Nachrichten)
-            if message.content.startswith('.') and len(message.content) > 1:
-                # Dies ist eine interne Staff-Nachricht, nicht weiterleiten
-                # Aber wir müssen prüfen ob es in einem Ticket ist
-                pass
-            return
-        
         guild = message.guild
         
         # Fall 1: Nachricht kommt von User in DM (Forum Mode)
         if isinstance(message.channel, discord.DMChannel):
+            # Commands in DMs ignorieren
+            if message.content.startswith(('!', '?', '/')):
+                return
             await self._handle_dm_message(message)
             return
         
         # Fall 2: Nachricht kommt von Staff in Ticket-Channel/Thread
         if guild:
+            # Nur Nachrichten verarbeiten die im Ticket-Channel sind
+            # "." Prefix wird in _handle_ticket_message verarbeitet
             await self._handle_ticket_message(message, guild)
     
     async def _handle_dm_message(self, message: discord.Message):
@@ -842,19 +838,40 @@ Geschlossen: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}
             color=discord.Color.blue(),
             timestamp=message.created_at
         )
-        embed.set_author(name=user.name, icon_url=user.display_avatar.url)
+        embed.set_author(name=user.name, icon_url=user.display_avatar.url if user.display_avatar else None)
         embed.set_footer(text=f"📩 Vom User (Ticket)")
         
         try:
-            webhook = await thread.create_webhook(name=user.name, avatar=user.display_avatar.url if user.display_avatar else None)
-            await webhook.send(content=content if content else None, embed=embed if not content else None, files=files if files else None, username=user.name)
+            # Webhook erstellen und senden
+            webhook_name = user.name[:32]  # Discord Limit
+            avatar_url = user.display_avatar.url if user.display_avatar else None
+            
+            webhook = await thread.create_webhook(name=webhook_name, avatar=avatar_url)
+            
+            # Content und/oder Embed senden
+            send_content = content if content else None
+            send_embed = embed if not content else None
+            
+            await webhook.send(
+                content=send_content,
+                embed=send_embed,
+                files=files if files else None,
+                username=webhook_name
+            )
             await webhook.delete()
-        except Exception:
-            # Fallback wenn Webhook nicht erstellt werden kann
+        except discord.Forbidden:
+            # Keine Webhook-Berechtigung - Fallback
             try:
-                await thread.send(content=f"📨 **Nachricht von {user.name}**:", embed=embed, files=files)
+                await thread.send(content=f"📨 **Nachricht von {user.name}**:", embed=embed, files=files if files else None)
             except Exception as e:
-                print(f"Fehler beim Senden an Thread: {e}")
+                print(f"Fehler beim Senden an Thread (Fallback): {e}")
+        except Exception as e:
+            # Allgemeiner Fehler - versuche einfaches Senden
+            print(f"Webhook-Fehler: {e}")
+            try:
+                await thread.send(content=f"📨 **{user.name}**: {content}" if content else None, files=files if files else None)
+            except Exception as e2:
+                print(f"Fehler beim Senden an Thread: {e2}")
     
     async def _handle_ticket_message(self, message: discord.Message, guild: discord.Guild):
         """Verarbeitet Staff-Nachrichten im Ticket und leitet sie an DM weiter"""
@@ -891,15 +908,12 @@ Geschlossen: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}
         if message.content.startswith('.'):
             new_content = message.content[1:].lstrip()
             
+            # Nur bearbeiten wenn sich der Inhalt geändert hat
             if new_content != message.content[1:]:
                 try:
-                    await message.delete()
-                    await message.channel.send(
-                        content=new_content,
-                        reference=message.reference
-                    )
-                except Exception:
                     await message.edit(content=new_content)
+                except Exception:
+                    pass  # Edit fehlgeschlagen, ignorieren
             return
         
         # Staff-Rolle prüfen
@@ -910,7 +924,8 @@ Geschlossen: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}
             if staff_role and staff_role in message.author.roles:
                 is_staff = True
         else:
-            is_staff = True
+            # Wenn keine Staff-Rolle konfiguriert ist, sind alle Mitglieder Staff
+            is_staff = isinstance(message.author, discord.Member)
         
         if not is_staff:
             return
@@ -922,12 +937,34 @@ Geschlossen: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}
         
         dm_channel = self.bot.get_channel(dm_id)
         if not dm_channel:
+            # Versuche DM Channel neu zu erstellen
+            user_id = ticket_data.get("user_id")
+            if user_id:
+                user = await self.bot.fetch_user(user_id)
+                if user:
+                    try:
+                        dm_channel = await user.create_dm()
+                        # Ticket-Daten aktualisieren
+                        ticket_data["dm_id"] = dm_channel.id
+                        await self.save_ticket_data(guild, int(list(ticket_data.keys())[0]) if "ticket_id" not in ticket_data else ticket_data.get("ticket_id", 0), ticket_data)
+                    except Exception:
+                        return
+            else:
+                return
+        
+        if not dm_channel:
             return
         
         user_id = ticket_data.get("user_id")
-        user = guild.get_member(user_id)
-        if not user:
+        if not user_id:
             return
+            
+        user = self.bot.get_user(user_id)
+        if not user:
+            try:
+                user = await self.bot.fetch_user(user_id)
+            except Exception:
+                return
         
         # Nachricht formatieren
         content = message.content
@@ -948,12 +985,24 @@ Geschlossen: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}
             timestamp=message.created_at
         )
         embed.set_author(name=message.author.name, icon_url=message.author.display_avatar.url)
-        embed.set_footer(text=f"🎫 Support (Ticket #{ticket_id})")
+        
+        # Ticket-ID aus ticket_data holen
+        ticket_id = ticket_data.get("ticket_id")
+        if not ticket_id:
+            # Versuche Ticket-ID aus den Keys zu extrahieren
+            for key in ticket_data.keys():
+                if key.isdigit():
+                    ticket_id = int(key)
+                    break
+        
+        if ticket_id:
+            embed.set_footer(text=f"🎫 Support (Ticket #{ticket_id})")
+        else:
+            embed.set_footer(text="🎫 Support")
         
         # Reference/Reply behandeln
-        reference = None
         if message.reference and isinstance(message.reference.resolved, discord.Message):
-            ref_content = message.reference.resolved.content[:100]
+            ref_content = message.reference.resolved.content[:100] if message.reference.resolved.content else "[Nachricht ohne Text]"
             embed.insert_field_at(
                 index=0,
                 name="Antwort auf:",
@@ -965,9 +1014,9 @@ Geschlossen: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}
             await dm_channel.send(
                 content=f"💬 **Antwort vom Support-Team**:",
                 embed=embed,
-                files=files
+                files=files if files else None
             )
-        except Exception as e:
+        except discord.Forbidden:
             # User hat DMs deaktiviert
             try:
                 await message.channel.send(
@@ -977,6 +1026,8 @@ Geschlossen: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}
                 )
             except Exception:
                 pass
+        except Exception as e:
+            print(f"Fehler beim Senden der DM: {e}")
     
     @commands.command(name="ticketinfo")
     async def ticket_info(self, ctx):

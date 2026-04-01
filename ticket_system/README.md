@@ -28,6 +28,7 @@ Ein professionelles, modernes Ticket-System mit Panel-Auswahl, DM-Weiterleitung 
 - **Prefix "."**: Setze `.` vor eine Nachricht → bleibt nur intern, wird NICHT an User gesendet
 - **Dateianhänge**: Werden automatisch mit weitergeleitet
 - **Embeds**: Nachrichten werden übersichtlich als Embed formatiert
+- **Webhook-Integration**: User-Nachrichten erscheinen im Thread mit ihrem Namen und Avatar
 
 ### 🔒 Ticket schließen
 - **Button**: Klick auf "🔒 Ticket schließen" Button
@@ -104,6 +105,7 @@ Ein professionelles, modernes Ticket-System mit Panel-Auswahl, DM-Weiterleitung 
 - **Logs**: Richte einen Log-Channel ein, um alle Transcripts zu speichern
 - **User-Hinweis**: Weise User darauf hin, dass sie NUR in ihren DMs antworten sollen
 - **Ephemeral Messages**: Alle Bestätigungen sind nur für den Nutzer sichtbar, um den Channel sauber zu halten
+- **Webhook-Berechtigung**: Der Bot benötigt "Webhooks verwalten" für optimale Darstellung der User-Nachrichten
 
 ## ❓ Support
 
@@ -119,6 +121,7 @@ Bei Problemen prüfe:
 - Prüfe ob der User ein aktives Ticket hat (`!ticketinfo`)
 - Der Bot muss Mitglied des Servers sein wo das Ticket erstellt wurde
 - Cache kann veraltet sein - Bot-Neustart hilft manchmal
+- **Wichtig**: Commands in DMs (wie `!ticket`) werden ignoriert - nur normale Nachrichten werden weitergeleitet
 
 ### "Kein aktives Ticket gefunden" Meldung
 - Diese Meldung erscheint wenn ein User in die DM des Bots schreibt OHNE zuvor ein Ticket erstellt zu haben
@@ -131,6 +134,7 @@ Bei Problemen prüfe:
 - Prüfe ob der User DMs von Server-Mitgliedern erlaubt hat
 - Der Bot braucht die Berechtigung "Nachrichten senden" in der DM
 - Bei geschlossenen Tickets funktioniert die Weiterleitung nicht mehr
+- **Fehlerbehebung**: Der Bot versucht automatisch, den DM-Kanal neu zu erstellen wenn er verloren geht
 
 ### User sieht Ticket-Erstellung nicht
 - Die Bestätigung nach `!ticket` ist bewusst ephemeral (nur für den User sichtbar)
@@ -141,3 +145,15 @@ Bei Problemen prüfe:
 - Dies kann bei Bot-Restarts passieren wenn der Cache geleert wird
 - Das System sucht dann automatisch in der Config Datenbank
 - Als Fallback wird auch der aktuelle Channel geprüft
+- **Verbesserung**: Der Bot durchsucht jetzt alle Guilds und Member-Daten für zuverlässiges Finden
+
+### Nachrichten werden nicht weitergeleitet
+- **Von User zu Staff**: Prüfe ob der User in der DM schreibt (nicht Commands!)
+- **Von Staff zu User**: Prüfe ob die Staff-Rolle korrekt konfiguriert ist
+- **Webhook-Fehler**: Ohne "Webhooks verwalten"-Berechtigung nutzt der Bot einen Fallback-Modus
+- **Debug**: Fehler werden im Console-Log ausgegeben für einfachere Fehlersuche
+
+### User kann trotz Ticket keine Nachricht senden
+- Commands wie `!ticket` in der DM werden ignoriert
+- Sende eine NORMALE NACHRICHT ohne Prefix
+- Beispiel: "Hallo, ich brauche Hilfe mit..." statt "!ticket Hallo"
