@@ -1,11 +1,24 @@
 """
 TicketPilot-ähnliches Ticket-System für RedBot
+
 Funktionen:
 - Forum Mode: DM mit User + Thread im Forum für Staff
 - Classic Mode: Dedizierter Ticket-Kanal
 - Nachrichten-Weiterleitung zwischen User (DM) und Staff (Thread/Kanal)
 - Prefix "." verhindert Weiterleitung an User
 - Transcript beim Schließen des Tickets
+- Ticket-Panel mit Button zum Erstellen von Tickets
+- Ticket-Info und Ticket-List Befehle
+- Verbesserte Fehlermeldungen und Hinweise für User
+
+Befehle:
+- !ticket - Öffnet ein neues Ticket
+- !close - Schließt das aktuelle Ticket
+- !ticketinfo - Zeigt Informationen zum aktuellen Ticket
+- !ticketlist - Listet alle aktiven Tickets (nur Staff)
+- !add @user - Fügt Benutzer zum Ticket hinzu (Classic Mode)
+- !remove @user - Entfernt Benutzer aus dem Ticket (Classic Mode)
+- !ticketsetup - Konfiguriert das Ticket-System
 """
 
 import discord
@@ -80,10 +93,16 @@ class TicketSystem(commands.Cog):
                 inline=False
             )
             embed.add_field(
+                name="`{}ticketsetup panel <channel>`".format(ctx.prefix),
+                value="Erstellt ein Ticket-Erstellungs-Panel im angegebenen Channel",
+                inline=False
+            )
+            embed.add_field(
                 name="`{}ticketsetup show`".format(ctx.prefix),
                 value="Zeigt die aktuelle Konfiguration",
                 inline=False
             )
+            embed.set_footer(text="💡 Forum Mode empfohlen: User kommunizieren per DM, Staff im Forum-Thread")
             await ctx.send(embed=embed)
 
     @ticket_setup.command(name="forum")
@@ -149,7 +168,118 @@ class TicketSystem(commands.Cog):
         log = ctx.guild.get_channel(log_id) if log_id else None
         embed.add_field(name="Log-Channel", value=log.mention if log else "Nicht gesetzt", inline=True)
         
+        # Aktive Tickets anzeigen
+        active_tickets = sum(1 for t in self.tickets.values() if not t.get("closed", False))
+        embed.add_field(name="🎫 Aktive Tickets", value=f"`{active_tickets}`", inline=True)
+        
+        embed.set_footer(text="💡 Forum Mode: User schreiben im DM, Staff antwortet im Thread")
         await ctx.send(embed=embed)
+
+    @ticket_setup.command(name="panel")
+    @commands.is_owner()
+    async def setup_panel(self, ctx, channel: discord.TextChannel):
+        """Erstellt ein Ticket-Erstellungs-Panel im angegebenen Channel"""
+        embed = discord.Embed(
+            title="🎫 Support-Ticket erstellen",
+            description="Klicke auf den Button unten, um ein Support-Ticket zu öffnen.\n\n"
+                        "**Was passiert dann?**\n"
+                        "• Ein Ticket wird für dich erstellt\n"
+                        "• Du erhältst eine Direktnachricht vom Bot\n"
+                        "• Schreibe dein Anliegen in diese DM\n"
+                        "• Das Support-Team wird dir im Forum-Thread antworten\n\n"
+                        "⚠️ **Wichtig:** Du kannst den Forum-Thread selbst nicht sehen.\n"
+                        "Kommuniziere ausschließlich über deine Direktnachrichten!",
+            color=discord.Color.blue()
+        )
+        embed.add_field(
+            name="ℹ️ Informationen",
+            value="• Beschreibe dein Problem so genau wie möglich\n"
+                  "• Sei höflich und geduldig\n"
+                  "• Das Team meldet sich schnellstmöglich",
+            inline=False
+        )
+        embed.set_footer(text="Support-Team | Antwortzeiten variieren")
+        
+        view = discord.ui.View()
+        button = discord.ui.Button(
+            label="Ticket öffnen",
+            style=discord.ButtonStyle.blurple,
+            emoji="🎫",
+            custom_id="open_ticket_button"
+        )
+        button.callback = self.panel_callback
+        view.add_item(button)
+        
+        await channel.send(embed=embed, view=view)
+        await ctx.send(f"✅ Ticket-Panel wurde in {channel.mention} erstellt.", delete_after=5)
+    
+    async def panel_callback(self, interaction: discord.Interaction):
+        """Callback für den Ticket-Panel Button"""
+        await interaction.response.defer(ephemeral=True)
+        
+        # Simuliere einen ticket-Befehl
+        user = interaction.user
+        guild = interaction.guild
+        
+        # Prüfen ob User bereits ein offenes Ticket hat
+        if user.id in self.user_tickets:
+            ticket_id = self.user_tickets[user.id]
+            if ticket_id in self.tickets:
+                ticket_info = self.tickets[ticket_id]
+                if not ticket_info.get("closed", False):
+                    thread_id = ticket_info.get("thread_id")
+                    channel_id = ticket_info.get("channel_id")
+                    
+                    if thread_id:
+                        await interaction.followup.send(
+                            embed=discord.Embed(
+                                title="ℹ️ Bereits offenes Ticket",
+                                description=f"Du hast bereits ein aktives Ticket: <#{thread_id}>\n\n"
+                                            f"**Wichtig:** Du musst dich in deinen **Direktnachrichten (DMs)** melden.\n"
+                                            f"Das Support-Team antwortet dir dort.",
+                                color=discord.Color.blue()
+                            ),
+                            ephemeral=True
+                        )
+                    elif channel_id:
+                        await interaction.followup.send(
+                            embed=discord.Embed(
+                                title="ℹ️ Bereits offenes Ticket",
+                                description=f"Du hast bereits ein aktives Ticket: <#{channel_id}>",
+                                color=discord.Color.blue()
+                            ),
+                            ephemeral=True
+                        )
+                    
+                    try:
+                        dm_channel = await user.create_dm()
+                        await dm_channel.send(
+                            embed=discord.Embed(
+                                title="💬 Deine Ticket-Kommunikation",
+                                description="Du hast bereits ein offenes Ticket!\n\n"
+                                            "**Bitte schreibe hier in diese Direktnachricht** - deine Nachrichten werden an das Support-Team weitergeleitet.\n\n"
+                                            "🔹 Das Team sieht deine DM und antwortet dir hier\n"
+                                            "🔹 Verwende `!close` zum Schließen deines Tickets",
+                                color=discord.Color.green()
+                            )
+                        )
+                    except:
+                        pass
+                    return
+        
+        # Neues Ticket erstellen
+        ctx_mock = type('obj', (object,), {'guild': guild, 'author': user, 'prefix': '!'})()
+        await self._open_forum_ticket(ctx_mock, user, guild)
+        
+        await interaction.followup.send(
+            embed=discord.Embed(
+                title="✅ Ticket wurde erstellt!",
+                description="Bitte überprüfe deine **Direktnachrichten**.\n"
+                            "Das Support-Team wird sich dort bei dir melden.",
+                color=discord.Color.green()
+            ),
+            ephemeral=True
+        )
 
     @commands.command(name="ticket", aliases=["support", "hilfe"])
     async def open_ticket(self, ctx):
@@ -163,12 +293,46 @@ class TicketSystem(commands.Cog):
             if ticket_id in self.tickets:
                 ticket_info = self.tickets[ticket_id]
                 if not ticket_info.get("closed", False):
-                    channel = ticket_info.get("channel")
-                    thread = ticket_info.get("thread")
-                    if channel:
-                        await ctx.send(f"ℹ️ Du hast bereits ein offenes Ticket: {channel.mention}")
-                    elif thread:
-                        await ctx.send(f"ℹ️ Du hast bereits ein offenes Ticket: {thread.mention}")
+                    thread_id = ticket_info.get("thread_id")
+                    channel_id = ticket_info.get("channel_id")
+                    dm_channel_id = ticket_info.get("dm_channel_id")
+                    
+                    if thread_id:
+                        await ctx.send(
+                            embed=discord.Embed(
+                                title="ℹ️ Bereits offenes Ticket",
+                                description=f"Du hast bereits ein aktives Ticket: <#{thread_id}>\n\n"
+                                            f"**Wichtig:** Du musst dich in deinen **Direktnachrichten (DMs)** melden.\n"
+                                            f"Das Support-Team antwortet dir dort.",
+                                color=discord.Color.blue()
+                            ),
+                            delete_after=10
+                        )
+                    elif channel_id:
+                        await ctx.send(
+                            embed=discord.Embed(
+                                title="ℹ️ Bereits offenes Ticket",
+                                description=f"Du hast bereits ein aktives Ticket: <#{channel_id}>",
+                                color=discord.Color.blue()
+                            ),
+                            delete_after=10
+                        )
+                    
+                    # Hinweis auf DMs senden
+                    try:
+                        dm_channel = await user.create_dm()
+                        await dm_channel.send(
+                            embed=discord.Embed(
+                                title="💬 Deine Ticket-Kommunikation",
+                                description="Du hast bereits ein offenes Ticket!\n\n"
+                                            "**Bitte schreibe hier in diese Direktnachricht** - deine Nachrichten werden an das Support-Team im Ticket-Thread weitergeleitet.\n\n"
+                                            "🔹 Das Team sieht deine DM und antwortet dir hier\n"
+                                            "🔹 Verwende `!close` zum Schließen deines Tickets",
+                                color=discord.Color.green()
+                            )
+                        )
+                    except:
+                        pass
                     return
 
         mode = await self.config.mode()
@@ -255,6 +419,12 @@ class TicketSystem(commands.Cog):
                   "• Team-Antworten erscheinen hier\n"
                   "• Wenn das Team vor eine Nachricht ein `.` setzt, bleibt sie nur im Thread\n"
                   "• Verwende `!close` um das Ticket zu schließen",
+            inline=False
+        )
+        info_embed.add_field(
+            name="💡 Wichtiger Hinweis:",
+            value="Du als Ticket-Ersteller kannst den Thread im Forum **nicht sehen**.\n"
+                  "**Schreibe ausschließlich in deine Direktnachrichten mit dem Bot!**",
             inline=False
         )
         await dm_channel.send(embed=info_embed)
@@ -355,9 +525,25 @@ class TicketSystem(commands.Cog):
             # Prüfen ob User ein Ticket hat
             if ctx.author.id in self.user_tickets:
                 ticket_id = self.user_tickets[ctx.author.id]
+            else:
+                # Prüfen ob Channel ein Thread in einem Ticket-Forum ist
+                if hasattr(ctx.channel, 'parent') and ctx.channel.parent:
+                    for tid, info in self.tickets.items():
+                        if info.get("thread_id") == ctx.channel.id:
+                            ticket_id = tid
+                            break
 
         if not ticket_id or ticket_id not in self.tickets:
-            await ctx.send("❌ Kein aktives Ticket gefunden.")
+            await ctx.send(
+                embed=discord.Embed(
+                    title="⚠️ Kein aktives Ticket",
+                    description="Ich konnte kein aktives Ticket für dich finden.\n\n"
+                              "ℹ️ **Wichtig:** Als Ticket-Ersteller musst du dich in deinen **Direktnachrichten (DMs)** melden.\n"
+                              "Das Support-Team antwortet dir dort.\n\n"
+                              "🎫 Öffne ein neues Ticket mit `{}ticket`".format(ctx.prefix),
+                    color=discord.Color.orange()
+                )
+            )
             return
 
         ticket_info = self.tickets[ticket_id]
@@ -686,6 +872,120 @@ class TicketSystem(commands.Cog):
                 return
 
         await ctx.send("✅ Benutzer wurde entfernt (Berechtigungen manuell prüfen).")
+
+    @commands.command(name="ticketinfo", aliases=["ti", "ticketstatus"])
+    async def ticket_info(self, ctx):
+        """Zeigt Informationen zum aktuellen Ticket"""
+        ticket_id = None
+        
+        # Prüfen ob im Ticket-Kanal/Thread
+        if ctx.channel.id in self.tickets:
+            ticket_id = ctx.channel.id
+        elif ctx.author.id in self.user_tickets:
+            ticket_id = self.user_tickets[ctx.author.id]
+        
+        if not ticket_id or ticket_id not in self.tickets:
+            await ctx.send(
+                embed=discord.Embed(
+                    title="ℹ️ Kein aktives Ticket",
+                    description="Du hast derzeit kein offenes Ticket.\nVerwende `!ticket` um ein neues zu erstellen.",
+                    color=discord.Color.orange()
+                ),
+                delete_after=10
+            )
+            return
+        
+        ticket_info = self.tickets[ticket_id]
+        user_id = ticket_info["user_id"]
+        user = ctx.guild.get_member(user_id)
+        user_name = user.name if user else f"User-{user_id}"
+        
+        thread_id = ticket_info.get("thread_id")
+        channel_id = ticket_info.get("channel_id")
+        
+        embed = discord.Embed(
+            title="🎫 Ticket-Informationen",
+            description=f"Ticket-ID: `{ticket_id}`",
+            color=discord.Color.blue()
+        )
+        embed.add_field(name="👤 Ticket-Ersteller", value=user.mention if user else user_name, inline=True)
+        embed.add_field(name="📅 Erstellt am", value=f"<t:{int(datetime.fromisoformat(ticket_info['created_at']).timestamp())}:R>", inline=True)
+        embed.add_field(name="🔒 Status", value="Geschlossen" if ticket_info.get("closed", False) else "Offen", inline=True)
+        
+        if thread_id:
+            embed.add_field(name="📝 Forum-Thread", value=f"<#{thread_id}>", inline=True)
+        if channel_id:
+            embed.add_field(name="📝 Ticket-Kanal", value=f"<#{channel_id}>", inline=True)
+        
+        message_count = len(ticket_info.get("messages", []))
+        embed.add_field(name="💬 Nachrichten", value=f"`{message_count}`", inline=True)
+        
+        # Hinweis für User
+        if ctx.author.id == user_id:
+            embed.add_field(
+                name="💡 Dein Hinweis",
+                value="Als Ticket-Ersteller musst du dich in deinen **Direktnachrichten** melden.\nDas Support-Team antwortet dir dort!",
+                inline=False
+            )
+        
+        await ctx.send(embed=embed, delete_after=30)
+
+    @commands.command(name="ticketlist", aliases=["tl", "alle tickets"])
+    @commands.has_permissions(manage_roles=True)
+    async def ticket_list(self, ctx):
+        """Listet alle aktiven Tickets auf (nur für Staff)"""
+        active_tickets = [t for t in self.tickets.values() if not t.get("closed", False)]
+        
+        if not active_tickets:
+            await ctx.send(
+                embed=discord.Embed(
+                    title="🎫 Alle Tickets",
+                    description="Derzeit sind keine aktiven Tickets offen.",
+                    color=discord.Color.green()
+                ),
+                delete_after=10
+            )
+            return
+        
+        embed = discord.Embed(
+            title="🎫 Aktive Tickets",
+            description=f"Insgesamt **{len(active_tickets)}** offene(s) Ticket(s)",
+            color=discord.Color.blue()
+        )
+        
+        for i, ticket in enumerate(active_tickets[:10], 1):  # Max 10 anzeigen
+            user_id = ticket["user_id"]
+            user = ctx.guild.get_member(user_id)
+            user_name = user.name if user else f"User-{user_id}"
+            
+            thread_id = ticket.get("thread_id")
+            channel_id = ticket.get("channel_id")
+            created = ticket.get("created_at", "")
+            
+            location = ""
+            if thread_id:
+                location = f"Thread: <#{thread_id}>"
+            elif channel_id:
+                location = f"Kanal: <#{channel_id}>"
+            
+            time_str = ""
+            if created:
+                try:
+                    ts = int(datetime.fromisoformat(created).timestamp())
+                    time_str = f" • <t:{ts}:R>"
+                except:
+                    pass
+            
+            embed.add_field(
+                name=f"{i}. {user_name}",
+                value=f"{location}{time_str}",
+                inline=False
+            )
+        
+        if len(active_tickets) > 10:
+            embed.set_footer(text=f"... und {len(active_tickets) - 10} weitere Tickets")
+        
+        await ctx.send(embed=embed)
 
 
 async def setup(bot):
