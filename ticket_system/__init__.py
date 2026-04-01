@@ -345,21 +345,32 @@ Geschlossen: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}
             if staff_role:
                 staff_ping = f" {staff_role.mention}"
         
-        # Thread im Forum erstellen
+        # Thread im Forum erstellen - KORREKTE METHODE FÜR ALLE DISCORD.PY VERSIONEN
         try:
-            # In Discord.py 2.x verwendet man create_thread() für Forum-Kanäle
-            post = await forum.create_thread(
+            # Forum-Kanäle verwenden create_thread() mit content Parameter
+            # Das Ergebnis ist ein ThreadWithMessage Objekt (hat .thread und .message Attribute)
+            result = await forum.create_thread(
                 name=f"Ticket #{ticket_id} - {ctx.author.name}",
                 content=f"User: {ctx.author.mention}\nID: #{ticket_id}\nErstellt: <t:{int(datetime.now().timestamp())}:R>\n\nBitte beschreibe dein Anliegen hier...{staff_ping}",
                 applied_tags=[],
                 reason=f"Ticket von {ctx.author}"
             )
-            # create_thread gibt direkt einen Thread zurück (kein ThreadWithMessage)
-            thread = post
-            if not thread or not hasattr(thread, 'id'):
-                raise RuntimeError("Konnte Thread nach Erstellung nicht finden")
+            
+            # Extrahiere den eigentlichen Thread aus dem Ergebnis
+            # ThreadWithMessage hat .thread Attribut, direkter Thread hat .id
+            if hasattr(result, 'thread') and result.thread is not None:
+                thread = result.thread
+            elif hasattr(result, 'id'):
+                thread = result
+            else:
+                raise RuntimeError(f"Unerwartetes Rückgabeformat: {type(result)}")
+                
+        except AttributeError as e:
+            # Fallback: Vielleicht ist es ein TextChannel statt ForumChannel
+            await ctx.send(f"❌ Der konfigurierte Channel ist kein gültiger Forum-Kanal. Bitte prüfe die Konfiguration mit `!ticketsetup show`")
+            return
         except Exception as e:
-            await ctx.send(f"Fehler beim Erstellen des Tickets: {str(e)}")
+            await ctx.send(f"❌ Fehler beim Erstellen des Tickets: {type(e).__name__}: {str(e)}")
             return
         
         # DM mit User erstellen
@@ -725,7 +736,7 @@ Geschlossen: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}
     
     async def _handle_dm_message(self, message: discord.Message):
         """Verarbeitet DM-Nachrichten vom User und leitet sie an den Thread weiter"""
-        user = message.author
+        user = message.author  # Dies ist ein User-Objekt, kein Member!
         
         # Erster Versuch: Cache durchsuchen (schnell)
         if message.channel.id in self.dm_cache:
@@ -753,6 +764,15 @@ Geschlossen: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}
                                 self.thread_cache[thread_id] = ticket_data
                                 await self._forward_dm_to_thread(message, thread, user, ticket_data)
                                 return
+        
+        # Kein Ticket gefunden - User informieren
+        try:
+            await message.channel.send(
+                "⚠️ Ich konnte kein aktives Ticket für dich finden. "
+                "Bitte öffne zuerst ein Ticket mit `!ticket`."
+            )
+        except Exception:
+            pass
     
     async def _forward_dm_to_thread(self, message: discord.Message, thread: discord.Thread, user: discord.User, ticket_data: Dict):
         """Leitet eine DM-Nachricht an den Thread weiter"""
