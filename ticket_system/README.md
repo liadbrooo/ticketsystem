@@ -14,6 +14,7 @@ Ein professionelles, modernes Ticket-System mit Panel-Auswahl, DM-Weiterleitung 
    - Erstellt Forum-Thread für Staff
    - Private DM mit User
    - Nachrichten werden zwischen Thread und DM weitergeleitet
+   - **User kommunizieren AUSSCHLIESSLICH in ihren DMs!**
 
 2. **Classic Mode**
    - Erstellt privaten Textkanal
@@ -63,6 +64,12 @@ Ein professionelles, modernes Ticket-System mit Panel-Auswahl, DM-Weiterleitung 
 | `!close`, `!schließen` | Schließt das eigene Ticket |
 | `!ticketinfo` | Zeigt Informationen zum aktuellen Ticket |
 
+**WICHTIG für Forum Mode:**
+- Nach dem Erstellen eines Tickets erhältst du eine DM vom Bot
+- **Antworte AUSSCHLIESSLICH in dieser DM** - deine Nachrichten werden an das Support-Team weitergeleitet
+- Du kannst den Forum-Thread selbst NICHT sehen oder darin schreiben
+- Das Support-Team antwortet dir ebenfalls per DM
+
 ### Für Staff
 | Aktion | Beschreibung |
 |--------|--------------|
@@ -87,6 +94,7 @@ Ein professionelles, modernes Ticket-System mit Panel-Auswahl, DM-Weiterleitung 
 - **Berechtigungen**: Stelle sicher, dass der Bot Berechtigungen hat, Channels/Threads zu erstellen
 - **DMs**: User müssen DMs vom Server erlaubt haben für die Weiterleitung
 - **Logs**: Richte einen Log-Channel ein, um alle Transcripts zu speichern
+- **User-Hinweis**: Weise User darauf hin, dass sie NUR in ihren DMs antworten sollen
 
 ## ❓ Support
 
@@ -94,3 +102,18 @@ Bei Problemen prüfe:
 1. Ist der Cog geladen? `[p]loadedcogs`
 2. Ist die Konfiguration vollständig? `[p]ticketsetup show`
 3. Hat der Bot alle notwendigen Berechtigungen?
+4. Haben die User DMs aktiviert?
+
+## 🆘 Häufige Probleme
+
+### User schreibt in DM aber nichts passiert
+- Prüfe ob der User ein aktives Ticket hat (`!ticketinfo`)
+- Der Bot muss Mitglied des Servers sein wo das Ticket erstellt wurde
+
+### "Kein aktives Ticket gefunden" Meldung
+- Diese Meldung erscheint wenn ein User in die DM des Bots schreibt OHNE zuvor ein Ticket erstellt zu haben
+- Lösung: User muss auf einem Server `!ticket` verwenden
+
+### Staff-Nachrichten kommen nicht beim User an
+- Prüfe ob der User DMs von Server-Mitgliedern erlaubt hat
+- Der Bot braucht die Berechtigung "Nachrichten senden" in der DM
