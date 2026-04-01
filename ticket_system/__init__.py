@@ -823,6 +823,13 @@ Geschlossen: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}
         """Leitet eine DM-Nachricht an den Thread weiter"""
         content = message.content
         
+        # Prüfen ob Thread archiviert ist
+        if hasattr(thread, 'archived') and thread.archived:
+            try:
+                await thread.edit(archived=False)
+            except Exception:
+                pass  # Kann nicht geöffnet werden
+        
         # Dateien mitsenden
         files = []
         for attachment in message.attachments:
@@ -832,29 +839,32 @@ Geschlossen: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}
             except Exception:
                 pass
         
-        # Embed für Kontext
+        # Embed für Kontext - IMMER erstellen
         embed = discord.Embed(
-            description=content if content else "[Kein Text]",
+            description=content if content else " ",
             color=discord.Color.blue(),
             timestamp=message.created_at
         )
         embed.set_author(name=user.name, icon_url=user.display_avatar.url if user.display_avatar else None)
         embed.set_footer(text=f"📩 Vom User (Ticket)")
         
+        # Falls es Anhänge gibt, diese im Embed erwähnen
+        if files:
+            embed.add_field(name="📎", value=f"{len(files)} Anhang/Anhänge", inline=False)
+        
         try:
             # Webhook erstellen und senden
             webhook_name = user.name[:32]  # Discord Limit
-            avatar_url = user.display_avatar.url if user.display_avatar else None
+            
+            # Avatar URL sicher handhaben
+            avatar_url = str(user.display_avatar.url) if user.display_avatar else None
             
             webhook = await thread.create_webhook(name=webhook_name, avatar=avatar_url)
             
-            # Content und/oder Embed senden
-            send_content = content if content else None
-            send_embed = embed if not content else None
-            
+            # Content und Embed gemeinsam senden (nicht entweder/oder)
             await webhook.send(
-                content=send_content,
-                embed=send_embed,
+                content=content if content else None,
+                embed=embed,
                 files=files if files else None,
                 username=webhook_name
             )
@@ -862,14 +872,18 @@ Geschlossen: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}
         except discord.Forbidden:
             # Keine Webhook-Berechtigung - Fallback
             try:
-                await thread.send(content=f"📨 **Nachricht von {user.name}**:", embed=embed, files=files if files else None)
+                fallback_content = f"📨 **Nachricht von {user.name}**:"
+                if content:
+                    fallback_content += f"\n{content}"
+                await thread.send(content=fallback_content, embed=embed if not content else None, files=files if files else None)
             except Exception as e:
                 print(f"Fehler beim Senden an Thread (Fallback): {e}")
         except Exception as e:
             # Allgemeiner Fehler - versuche einfaches Senden
             print(f"Webhook-Fehler: {e}")
             try:
-                await thread.send(content=f"📨 **{user.name}**: {content}" if content else None, files=files if files else None)
+                fallback_text = f"📨 **{user.name}**: {content}" if content else f"📨 **{user.name}** hat eine Nachricht gesendet."
+                await thread.send(content=fallback_text, files=files if files else None)
             except Exception as e2:
                 print(f"Fehler beim Senden an Thread: {e2}")
     
@@ -924,8 +938,10 @@ Geschlossen: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}
             if staff_role and staff_role in message.author.roles:
                 is_staff = True
         else:
-            # Wenn keine Staff-Rolle konfiguriert ist, sind alle Mitglieder Staff
-            is_staff = isinstance(message.author, discord.Member)
+            # Wenn keine Staff-Rolle konfiguriert ist, sind alle Mitglieder Staff (außer Bot und Ticket-Ersteller)
+            user_id = ticket_data.get("user_id")
+            if message.author.id != user_id and not message.author.bot:
+                is_staff = True
         
         if not is_staff:
             return
@@ -944,9 +960,10 @@ Geschlossen: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}
                 if user:
                     try:
                         dm_channel = await user.create_dm()
-                        # Ticket-Daten aktualisieren
-                        ticket_data["dm_id"] = dm_channel.id
-                        await self.save_ticket_data(guild, int(list(ticket_data.keys())[0]) if "ticket_id" not in ticket_data else ticket_data.get("ticket_id", 0), ticket_data)
+                        # Ticket-Daten aktualisieren - hole ticket_id korrekt
+                        tid = ticket_data.get("ticket_id")
+                        if tid:
+                            await self.save_ticket_data(guild, tid, ticket_data)
                     except Exception:
                         return
             else:
@@ -978,22 +995,16 @@ Geschlossen: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}
             except Exception:
                 pass
         
-        # Embed erstellen
+        # Embed erstellen - IMMER mit Author-Info
         embed = discord.Embed(
-            description=content if content else "[Kein Text]",
+            description=content if content else " ",
             color=discord.Color.green(),
             timestamp=message.created_at
         )
-        embed.set_author(name=message.author.name, icon_url=message.author.display_avatar.url)
+        embed.set_author(name=message.author.name, icon_url=message.author.display_avatar.url if message.author.display_avatar else None)
         
         # Ticket-ID aus ticket_data holen
         ticket_id = ticket_data.get("ticket_id")
-        if not ticket_id:
-            # Versuche Ticket-ID aus den Keys zu extrahieren
-            for key in ticket_data.keys():
-                if key.isdigit():
-                    ticket_id = int(key)
-                    break
         
         if ticket_id:
             embed.set_footer(text=f"🎫 Support (Ticket #{ticket_id})")
@@ -1002,17 +1013,23 @@ Geschlossen: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}
         
         # Reference/Reply behandeln
         if message.reference and isinstance(message.reference.resolved, discord.Message):
-            ref_content = message.reference.resolved.content[:100] if message.reference.resolved.content else "[Nachricht ohne Text]"
+            ref_msg = message.reference.resolved
+            ref_author = ref_msg.author.name if hasattr(ref_msg, 'author') else "Unbekannt"
+            ref_content = ref_msg.content[:100] if ref_msg.content else "[Nachricht ohne Text]"
             embed.insert_field_at(
                 index=0,
                 name="Antwort auf:",
-                value=f"{message.reference.resolved.author.name}: {ref_content}",
+                value=f"{ref_author}: {ref_content}",
                 inline=False
             )
         
+        # Falls Anhänge existieren, im Embed erwähnen
+        if files:
+            embed.add_field(name="📎", value=f"{len(files)} Anhang/Anhänge", inline=False)
+        
         try:
             await dm_channel.send(
-                content=f"💬 **Antwort vom Support-Team**:",
+                content=f"💬 **Antwort von {message.author.name}**:",
                 embed=embed,
                 files=files if files else None
             )
