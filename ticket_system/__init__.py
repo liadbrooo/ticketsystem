@@ -321,9 +321,9 @@ Geschlossen: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}
         else:
             await self._create_classic_ticket(ctx)
     
-    async def _create_forum_ticket(self, ctx):
+    async def _create_forum_ticket(self, ctx, panel_id: str = None):
         """Erstellt ein Ticket im Forum-Mode"""
-        guild = ctx.guild
+        guild = ctx.guild if hasattr(ctx, 'guild') else ctx.guild
         forum_id = await self.config.guild(guild).forum_channel()
         
         if not forum_id:
@@ -378,6 +378,278 @@ Geschlossen: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}
             return
         
         # DM mit User erstellen
+        try:
+            dm_channel = await ctx.author.create_dm()
+            await dm_channel.send(
+                f"🎫 **Dein Ticket #{ticket_id} wurde eröffnet!**\n\n"
+                f"**WICHTIG:** Antworte AUSSCHLIESSLICH in dieser Direktnachricht!\n"
+                f"Deine Nachrichten werden automatisch an das Support-Team im Thread weitergeleitet.\n"
+                f"Schreibe NICHT direkt im Thread - dies ist nur für das Support-Team.\n\n"
+                f"Verwende `!close` oder `!schließen` um das Ticket zu schließen."
+            )
+        except Exception as e:
+            await ctx.send("⚠️ Ich konnte dir keine DM senden. Bitte aktiviere DMs von Server-Mitgliedern.", ephemeral=True)
+            dm_channel = None
+        
+        # Ticket-Daten speichern (mit guild_id für DM-Lookup)
+        ticket_data = {
+            "user_id": ctx.author.id,
+            "guild_id": guild.id,
+            "thread_id": thread.id,
+            "dm_id": dm_channel.id if dm_channel else None,
+            "created_at": int(datetime.now().timestamp()),
+            "mode": "forum",
+            "panel_id": panel_id
+        }
+        await self.save_ticket_data(guild, ticket_id, ticket_data)
+        
+        # Caches aktualisieren für schnelle Lookups
+        if dm_channel:
+            self.dm_cache[dm_channel.id] = {"guild_id": guild.id, "ticket_id": ticket_id, **ticket_data}
+        self.thread_cache[thread.id] = {"guild_id": guild.id, "ticket_id": ticket_id, **ticket_data}
+        
+        # Member-Ticket-Zuordnung speichern (neues System)
+        member_tickets = await self.config.member(ctx.author).tickets()
+        member_tickets.append({"guild_id": guild.id, "ticket_id": ticket_id})
+        await self.config.member(ctx.author).tickets.set(member_tickets)
+        
+        # Bestätigung - NUR für den User sichtbar (ephemeral)
+        embed = discord.Embed(
+            title="🎫 Ticket erfolgreich erstellt!",
+            description=f"Dein Ticket **#{ticket_id}** wurde eröffnet.",
+            color=discord.Color.green()
+        )
+        embed.add_field(
+            name="📌 Wichtiger Hinweis",
+            value="Du musst jetzt in deinen **Direktnachrichten (DMs)** antworten!\n"
+                  "Öffne deine DMs mit dem Bot und schreibe dort dein Anliegen.\n"
+                  "Der Thread hier ist nur für das Support-Team sichtbar.",
+            inline=False
+        )
+        embed.set_footer(text="Überprüfe deine DMs!")
+        embed.timestamp = datetime.now()
+        
+        await ctx.send(embed=embed, ephemeral=True)
+        
+        # Staff-Benachrichtigung im Thread (staff_ping wurde bereits oben gesetzt)
+        await thread.send(
+            f"🆕 **Neues Ticket #{ticket_id}**\n"
+            f"User: {ctx.author.mention}{staff_ping}\n\n"
+            f"💡 **WICHTIG für Staff:** \n"
+            f"- Der User sieht diesen Thread NICHT und kann hier nicht schreiben!\n"
+            f"- Alle Antworten des Users kommen via DM - antworte HIER im Thread\n"
+            f"- Deine Nachrichten werden automatisch als DM an den User gesendet\n"
+            f"- Setze ein `.` vor deine Nachricht, um sie nur intern zu behalten\n"
+            f"- Verwende `!close` zum Schließen des Tickets"
+        )
+    
+    async def _create_ticket_from_panel(self, interaction: discord.Interaction, panel: dict):
+        """Erstellt ein Ticket basierend auf einer Panel-Auswahl"""
+        guild = interaction.guild
+        user = interaction.user
+        panel_id = panel.get("id")
+        panel_name = panel.get("name", "Support")
+        
+        mode = await self.config.guild(guild).mode()
+        
+        if mode == "forum":
+            await self._create_forum_ticket_from_panel(interaction, panel)
+        else:
+            await self._create_classic_ticket_from_panel(interaction, panel)
+    
+    async def _create_forum_ticket_from_panel(self, interaction: discord.Interaction, panel: dict):
+        """Erstellt ein Forum-Ticket basierend auf Panel-Auswahl"""
+        guild = interaction.guild
+        user = interaction.user
+        panel_id = panel.get("id")
+        panel_name = panel.get("name", "Support")
+        panel_emoji = panel.get("emoji", "📧")
+        
+        forum_id = await self.config.guild(guild).forum_channel()
+        if not forum_id:
+            await interaction.followup.send("❌ Das Ticket-System ist nicht korrekt konfiguriert.", ephemeral=True)
+            return
+        
+        forum = guild.get_channel(forum_id)
+        if not forum:
+            await interaction.followup.send("❌ Forum-Channel nicht gefunden.", ephemeral=True)
+            return
+        
+        # Ticket-ID generieren
+        current_count = await self.config.guild(guild).ticket_counter()
+        new_count = current_count + 1
+        await self.config.guild(guild).ticket_counter.set(new_count)
+        ticket_id = new_count
+        
+        # Staff-Rolle holen
+        staff_role_id = await self.config.guild(guild).staff_role()
+        staff_ping = ""
+        if staff_role_id:
+            staff_role = guild.get_role(staff_role_id)
+            if staff_role:
+                staff_ping = f" {staff_role.mention}"
+        
+        # Thread im Forum erstellen
+        try:
+            result = await forum.create_thread(
+                name=f"{panel_emoji} Ticket #{ticket_id} - {user.name}",
+                content=f"{panel_emoji} **Kategorie: {panel_name}**\n\nUser: {user.mention}\nID: #{ticket_id}\nErstellt: <t:{int(datetime.now().timestamp())}:R>\n\nBitte beschreibe dein Anliegen...{staff_ping}",
+                applied_tags=[],
+                reason=f"Ticket von {user} - Kategorie: {panel_name}"
+            )
+            
+            if hasattr(result, 'thread') and result.thread is not None:
+                thread = result.thread
+            elif hasattr(result, 'id'):
+                thread = result
+            else:
+                raise RuntimeError(f"Unerwartetes Rückgabeformat: {type(result)}")
+                
+        except Exception as e:
+            await interaction.followup.send(f"❌ Fehler beim Erstellen: {type(e).__name__}: {str(e)}", ephemeral=True)
+            return
+        
+        # DM mit User erstellen
+        try:
+            dm_channel = await user.create_dm()
+            await dm_channel.send(
+                f"🎫 **Dein Ticket #{ticket_id} ({panel_name}) wurde eröffnet!**\n\n"
+                f"**WICHTIG:** Antworte AUSSCHLIESSLICH in dieser Direktnachricht!\n"
+                f"Deine Nachrichten werden automatisch an das Support-Team weitergeleitet.\n\n"
+                f"Verwende `!close` um das Ticket zu schließen."
+            )
+        except Exception:
+            dm_channel = None
+        
+        # Ticket-Daten speichern
+        ticket_data = {
+            "user_id": user.id,
+            "guild_id": guild.id,
+            "thread_id": thread.id,
+            "dm_id": dm_channel.id if dm_channel else None,
+            "created_at": int(datetime.now().timestamp()),
+            "mode": "forum",
+            "panel_id": panel_id,
+            "panel_name": panel_name
+        }
+        await self.save_ticket_data(guild, ticket_id, ticket_data)
+        
+        # Caches aktualisieren
+        if dm_channel:
+            self.dm_cache[dm_channel.id] = {"guild_id": guild.id, "ticket_id": ticket_id, **ticket_data}
+        self.thread_cache[thread.id] = {"guild_id": guild.id, "ticket_id": ticket_id, **ticket_data}
+        
+        # Member-Ticket speichern
+        member_tickets = await self.config.member(user).tickets()
+        member_tickets.append({"guild_id": guild.id, "ticket_id": ticket_id})
+        await self.config.member(user).tickets.set(member_tickets)
+        
+        # Bestätigung
+        embed = discord.Embed(
+            title=f"{panel_emoji} Ticket erfolgreich erstellt!",
+            description=f"Dein Ticket **#{ticket_id}** in der Kategorie **{panel_name}** wurde eröffnet.",
+            color=discord.Color.green()
+        )
+        embed.add_field(
+            name="📌 Wichtig",
+            value="Antworte in deinen **DMs** mit dem Bot!",
+            inline=False
+        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
+        
+        # Staff-Nachricht
+        await thread.send(
+            f"🆕 **Neues Ticket #{ticket_id}**\n"
+            f"Kategorie: {panel_emoji} {panel_name}\n"
+            f"User: {user.mention}{staff_ping}\n\n"
+            f"💡 **Staff-Hinweis:** User kommuniziert via DM!"
+        )
+    
+    async def _create_classic_ticket_from_panel(self, interaction: discord.Interaction, panel: dict):
+        """Erstellt ein Classic-Ticket basierend auf Panel-Auswahl"""
+        guild = interaction.guild
+        user = interaction.user
+        panel_id = panel.get("id")
+        panel_name = panel.get("name", "Support")
+        panel_emoji = panel.get("emoji", "📧")
+        
+        category_id = await self.config.guild(guild).category_id()
+        if not category_id:
+            await interaction.followup.send("❌ Keine Kategorie konfiguriert.", ephemeral=True)
+            return
+        
+        category = guild.get_channel(category_id)
+        if not category:
+            await interaction.followup.send("❌ Kategorie nicht gefunden.", ephemeral=True)
+            return
+        
+        # Ticket-ID generieren
+        current_count = await self.config.guild(guild).ticket_counter()
+        new_count = current_count + 1
+        await self.config.guild(guild).ticket_counter.set(new_count)
+        ticket_id = new_count
+        
+        # Berechtigungen setzen
+        overwrites = {
+            guild.default_role: discord.PermissionOverwrite(read_messages=False),
+            user: discord.PermissionOverwrite(read_messages=True, send_messages=True),
+            self.bot.user: discord.PermissionOverwrite(read_messages=True, send_messages=True)
+        }
+        
+        staff_role_id = await self.config.guild(guild).staff_role()
+        if staff_role_id:
+            staff_role = guild.get_role(staff_role_id)
+            if staff_role:
+                overwrites[staff_role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
+        
+        try:
+            channel = await guild.create_text_channel(
+                name=f"{panel_emoji}-ticket-{ticket_id}",
+                category=category,
+                overwrites=overwrites,
+                topic=f"Ticket #{ticket_id} | {panel_name} | User: {user.name}",
+                reason=f"Ticket von {user} - {panel_name}"
+            )
+        except Exception as e:
+            await interaction.followup.send(f"❌ Fehler: {str(e)}", ephemeral=True)
+            return
+        
+        # Ticket-Daten speichern
+        ticket_data = {
+            "user_id": user.id,
+            "guild_id": guild.id,
+            "channel_id": channel.id,
+            "dm_id": None,
+            "created_at": int(datetime.now().timestamp()),
+            "mode": "classic",
+            "panel_id": panel_id,
+            "panel_name": panel_name
+        }
+        await self.save_ticket_data(guild, ticket_id, ticket_data)
+        self.thread_cache[channel.id] = {"guild_id": guild.id, "ticket_id": ticket_id, **ticket_data}
+        
+        # Member-Ticket speichern
+        member_tickets = await self.config.member(user).tickets()
+        member_tickets.append({"guild_id": guild.id, "ticket_id": ticket_id})
+        await self.config.member(user).tickets.set(member_tickets)
+        
+        # Bestätigung
+        embed = discord.Embed(
+            title=f"{panel_emoji} Ticket erstellt!",
+            description=f"Dein Ticket **#{ticket_id}** ({panel_name}) wurde erstellt: {channel.mention}",
+            color=discord.Color.green()
+        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
+        
+        # Erste Nachricht im Channel
+        staff_role_id = await self.config.guild(guild).staff_role()
+        staff_ping = f" <@&{staff_role_id}>" if staff_role_id else ""
+        await channel.send(
+            f"🎫 **Ticket #{ticket_id}**\n"
+            f"Kategorie: {panel_emoji} {panel_name}\n"
+            f"User: {user.mention}\n\n"
+            f"Bitte beschreibe dein Anliegen!{staff_ping}"
+        )
         try:
             dm_channel = await ctx.author.create_dm()
             await dm_channel.send(
