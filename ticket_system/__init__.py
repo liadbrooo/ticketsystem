@@ -765,11 +765,15 @@ Geschlossen: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}
                                 await self._forward_dm_to_thread(message, thread, user, ticket_data)
                                 return
         
-        # Kein Ticket gefunden - User informieren
+        # Kein Ticket gefunden - User informieren dass er zuerst !ticket verwenden muss
+        # WICHTIG: Diese Nachricht sollte nur kommen wenn der User wirklich KEIN Ticket hat
+        # und nicht wenn er einfach in seinen DMs schreibt OHNE Ticket
         try:
             await message.channel.send(
-                "⚠️ Ich konnte kein aktives Ticket für dich finden. "
-                "Bitte öffne zuerst ein Ticket mit `!ticket`."
+                "⚠️ **Kein aktives Ticket gefunden!**\n\n"
+                "Du hast derzeit kein offenes Ticket auf einem Server.\n"
+                "Bitte gehe auf einen Server und verwende dort `!ticket` um ein neues Ticket zu erstellen.\n\n"
+                "**Wichtig:** Nach dem Erstellen eines Tickets wirst du hier in deinen DMs mit dem Support-Team kommunizieren."
             )
         except Exception:
             pass
