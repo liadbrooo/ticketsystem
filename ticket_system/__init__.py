@@ -846,9 +846,15 @@ Geschlossen: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}
         embed.set_footer(text=f"📩 Vom User (Ticket)")
         
         try:
-            await thread.send(content=f"📨 **Nachricht von {user.name}**:", embed=embed, files=files)
-        except Exception as e:
-            pass  # Fehler ignorieren
+            webhook = await thread.create_webhook(name=user.name, avatar=user.display_avatar.url if user.display_avatar else None)
+            await webhook.send(content=content if content else None, embed=embed if not content else None, files=files if files else None, username=user.name)
+            await webhook.delete()
+        except Exception:
+            # Fallback wenn Webhook nicht erstellt werden kann
+            try:
+                await thread.send(content=f"📨 **Nachricht von {user.name}**:", embed=embed, files=files)
+            except Exception as e:
+                print(f"Fehler beim Senden an Thread: {e}")
     
     async def _handle_ticket_message(self, message: discord.Message, guild: discord.Guild):
         """Verarbeitet Staff-Nachrichten im Ticket und leitet sie an DM weiter"""
