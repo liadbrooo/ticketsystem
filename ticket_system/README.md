@@ -152,8 +152,20 @@ Bei Problemen prüfe:
 - **Von Staff zu User**: Prüfe ob die Staff-Rolle korrekt konfiguriert ist
 - **Webhook-Fehler**: Ohne "Webhooks verwalten"-Berechtigung nutzt der Bot einen Fallback-Modus
 - **Debug**: Fehler werden im Console-Log ausgegeben für einfachere Fehlersuche
+- **Avatar-Anzeige**: User-Nachrichten erscheinen jetzt mit dem korrekten Namen und Avatar des Users im Thread
+- **Staff-Namen**: User sehen in der DM den genauen Namen des Staff-Mitglieds das geantwortet hat
 
 ### User kann trotz Ticket keine Nachricht senden
 - Commands wie `!ticket` in der DM werden ignoriert
 - Sende eine NORMALE NACHRICHT ohne Prefix
 - Beispiel: "Hallo, ich brauche Hilfe mit..." statt "!ticket Hallo"
+
+### Nachrichten erscheinen ohne Text oder leer
+- Leere Nachrichten (nur Bilder/Dateien) werden jetzt korrekt mit einem Platzhalter behandelt
+- Anhänge werden sowohl als Datei als auch mit Hinweis im Embed gesendet
+- Das System erkennt automatisch ob Content vorhanden ist und passt die Darstellung an
+
+### Team sieht nicht wer geschrieben hat
+- Jede Nachricht vom User wird mit seinem Discord-Namen und Avatar angezeigt
+- Webhook nutzt die echten User-Daten für maximale Authentizität
+- Bei Fallback-Modus wird der Name explizit im Text erwähnt ("📨 **User.Name**: Nachricht")
